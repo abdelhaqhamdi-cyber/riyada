@@ -1,0 +1,5 @@
+{
+  "name": "Muhandis AI (مهندس)",
+  "description": "An AI-powered architectural planning tool for software engineers. It takes project requirements and generates technical specifications, database schemas, and API designs using Gemini.",
+  "requestFramePermissions": []
+}
