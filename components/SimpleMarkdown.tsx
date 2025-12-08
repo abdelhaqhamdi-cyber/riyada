@@ -163,8 +163,11 @@ export const SimpleMarkdown: React.FC<SimpleMarkdownProps> = ({ content }) => {
     }
 
     // --- Table Handling ---
-    // Heuristic: Line starts with | is likely a table row
-    if (line.trim().startsWith('|')) {
+    // Heuristic: Line starts with | AND looks like a table row (has internal structure or closing pipe)
+    const trimmedLine = line.trim();
+    const looksLikeTable = trimmedLine.startsWith('|') && (trimmedLine.endsWith('|') || trimmedLine.split('|').length > 2);
+    
+    if (looksLikeTable) {
       inTable = true;
       tableBuffer.push(line);
       

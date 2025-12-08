@@ -18,12 +18,14 @@ import {
   RefreshCw,
   Play,
   Square,
-  FileText
+  FileText,
+  Upload,
+  FileJson
 } from 'lucide-react';
 
-// Updated storage key to ensure new tasks (v7) are loaded for the user
-const STORAGE_KEY = 'muhandis_tasks_v7';
-const ACTIVE_TASK_KEY = 'muhandis_active_task_v7';
+// Updated storage key to ensure new tasks (v8) are loaded for the user
+const STORAGE_KEY = 'muhandis_tasks_v8';
+const ACTIVE_TASK_KEY = 'muhandis_active_task_v8';
 
 const App: React.FC = () => {
   // 1. Persistence Logic: Load from localStorage or fall back to INITIAL_TASKS
@@ -52,6 +54,9 @@ const App: React.FC = () => {
   // Batch processing state
   const [isBatchProcessing, setIsBatchProcessing] = useState(false);
   const stopBatchRef = useRef(false);
+  
+  // File input ref for import
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Save tasks to localStorage
   useEffect(() => {
@@ -101,7 +106,7 @@ const App: React.FC = () => {
     document.body.removeChild(element);
   };
 
-  // 4. Export Logic (Full Project Report) - ADDED FOR FIELD READINESS
+  // 4. Export Full Project Report (Markdown)
   const handleExportFullProject = () => {
     if (tasks.every(t => !t.result)) {
       alert("لا يوجد محتوى مكتمل لتصديره. يرجى توليد المهام أولاً.");
@@ -136,11 +141,53 @@ const App: React.FC = () => {
     document.body.removeChild(element);
   };
 
+  // 5. Backup & Restore Logic (JSON)
+  const handleExportBackup = () => {
+    const dataStr = JSON.stringify(tasks, null, 2);
+    const element = document.createElement("a");
+    const file = new Blob([dataStr], {type: 'application/json'});
+    element.href = URL.createObjectURL(file);
+    element.download = `MuhandisAI_Backup_${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
+
+  const handleImportBackup = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const content = e.target?.result as string;
+        const parsed = JSON.parse(content);
+        // Basic validation
+        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].id && parsed[0].title) {
+            if (window.confirm("تحذير: سيتم استبدال جميع المهام الحالية بالبيانات الموجودة في الملف. هل أنت متأكد؟")) {
+                setTasks(parsed);
+                // Reset active task to the first one in the backup
+                setActiveTaskId(parsed[0].id);
+                alert("تم استعادة النسخة الاحتياطية بنجاح.");
+            }
+        } else {
+            alert("الملف المختار غير صالح أو تالف.");
+        }
+      } catch (error) {
+        console.error(error);
+        alert("حدث خطأ أثناء قراءة الملف.");
+      }
+    };
+    reader.readAsText(file);
+    // Reset value to allow re-uploading same file if needed
+    event.target.value = '';
+  };
+
   const handleGenerate = async () => {
     if (!activeTask) return;
 
     setTasks(prev => prev.map(t => 
-      t.id === activeTask.id ? { ...t, status: TaskStatus.PROCESSING } : t
+      t.id === activeTask.id ? { ...t, status: TaskStatus.PROCESSING, errorMessage: undefined } : t
     ));
 
     try {
@@ -154,8 +201,10 @@ const App: React.FC = () => {
         } : t
       ));
     } catch (error) {
+       console.error("Task generation failed:", error);
+       const errorMsg = error instanceof Error ? error.message : "حدث خطأ غير معروف";
        setTasks(prev => prev.map(t => 
-        t.id === activeTask.id ? { ...t, status: TaskStatus.FAILED } : t
+        t.id === activeTask.id ? { ...t, status: TaskStatus.FAILED, errorMessage: errorMsg } : t
       ));
     }
   };
@@ -188,7 +237,7 @@ const App: React.FC = () => {
         if (!task) continue;
 
         setActiveTaskId(id);
-        setTasks(prev => prev.map(t => t.id === id ? { ...t, status: TaskStatus.PROCESSING } : t));
+        setTasks(prev => prev.map(t => t.id === id ? { ...t, status: TaskStatus.PROCESSING, errorMessage: undefined } : t));
         await new Promise(resolve => setTimeout(resolve, 1500)); // Delay for UX and Rate limits
 
         if (stopBatchRef.current) break;
@@ -198,7 +247,8 @@ const App: React.FC = () => {
            setTasks(prev => prev.map(t => t.id === id ? { ...t, status: TaskStatus.COMPLETED, result } : t));
         } catch (error) {
            console.error(`Error generating task ${id}:`, error);
-           setTasks(prev => prev.map(t => t.id === id ? { ...t, status: TaskStatus.FAILED } : t));
+           const errorMsg = error instanceof Error ? error.message : "خطأ غير معروف";
+           setTasks(prev => prev.map(t => t.id === id ? { ...t, status: TaskStatus.FAILED, errorMessage: errorMsg } : t));
         }
       }
     } catch (globalError) {
@@ -247,6 +297,15 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden" dir="rtl">
+      {/* Hidden File Input */}
+      <input 
+        type="file" 
+        ref={fileInputRef}
+        onChange={handleImportBackup}
+        accept=".json"
+        className="hidden"
+      />
+
       {/* Sidebar */}
       <aside 
         className={`
@@ -290,10 +349,29 @@ const App: React.FC = () => {
         </div>
         
         <div className="p-4 border-t border-slate-100 bg-slate-50 space-y-3">
-          {/* Export Full Project Button - New for Readiness */}
+          {/* Data Management & Export Area */}
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <button 
+              onClick={handleExportBackup}
+              className="flex items-center justify-center gap-1.5 bg-white text-slate-600 py-2 rounded-lg text-xs font-bold border border-slate-200 hover:bg-slate-50 transition-colors"
+              title="تصدير ملف المشروع (Backup)"
+            >
+              <FileJson className="w-4 h-4" />
+              حفظ نسخة
+            </button>
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center justify-center gap-1.5 bg-white text-slate-600 py-2 rounded-lg text-xs font-bold border border-slate-200 hover:bg-slate-50 transition-colors"
+              title="استعادة ملف مشروع"
+            >
+              <Upload className="w-4 h-4" />
+              استعادة
+            </button>
+          </div>
+
           <button 
             onClick={handleExportFullProject}
-            className="w-full flex items-center justify-center gap-2 bg-white text-slate-700 py-2 rounded-lg text-sm font-bold border border-slate-300 hover:bg-slate-50 hover:text-primary hover:border-primary transition-colors shadow-sm"
+            className="w-full flex items-center justify-center gap-2 bg-slate-800 text-white py-2 rounded-lg text-sm font-bold hover:bg-slate-700 transition-colors shadow-sm"
           >
             <FileText className="w-4 h-4" />
              تصدير التقرير الكامل
@@ -307,7 +385,7 @@ const App: React.FC = () => {
                 className="w-full flex items-center justify-center gap-2 bg-red-50 text-red-600 py-2 rounded-lg text-sm font-bold border border-red-200 hover:bg-red-100 transition-colors shadow-sm"
               >
                 <Square className="w-4 h-4 fill-current" />
-                إيقاف التوليد
+                إيقاف
               </button>
             ) : (
               <button 
@@ -315,7 +393,7 @@ const App: React.FC = () => {
                 className="w-full flex items-center justify-center gap-2 bg-indigo-50 text-indigo-700 py-2 rounded-lg text-sm font-bold border border-indigo-200 hover:bg-indigo-100 transition-colors shadow-sm"
               >
                 <Play className="w-4 h-4 fill-current" />
-                توليد الكل تلقائياً
+                توليد الكل
               </button>
             )}
           </div>
@@ -327,7 +405,7 @@ const App: React.FC = () => {
               </div>
               <div>
                 <p className="text-sm font-medium text-slate-700">مدير النظام</p>
-                <p className="text-xs text-slate-500">مشروع المنصة الرياضية</p>
+                <p className="text-xs text-slate-500">جاهز للعمل الميداني</p>
               </div>
             </div>
             <button 
@@ -378,7 +456,7 @@ const App: React.FC = () => {
              )}
              <span className="px-3 py-1 bg-green-50 text-green-700 text-xs rounded-full border border-green-100 font-medium flex items-center gap-1 shadow-sm">
                <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
-               Gemini Active
+               Gemini Pro 3.0
              </span>
           </div>
         </header>
@@ -454,7 +532,7 @@ const App: React.FC = () => {
                         </div>
                         <div>
                           <h2 className="font-bold text-slate-800">المواصفات التقنية المولدة</h2>
-                          <p className="text-xs text-slate-400 font-mono">Gemini 2.5 Flash</p>
+                          <p className="text-xs text-slate-400 font-mono">Gemini 3.0 Pro Preview</p>
                         </div>
                       </div>
                       
@@ -484,10 +562,13 @@ const App: React.FC = () => {
 
               {activeTask.status === TaskStatus.FAILED && (
                  <div className="bg-red-50 text-red-700 p-4 rounded-xl flex items-center gap-3 border border-red-100">
-                    <AlertCircle className="w-6 h-6" />
-                    <div>
+                    <AlertCircle className="w-6 h-6 flex-shrink-0" />
+                    <div className="flex-1">
                       <p className="font-bold">فشل الاتصال</p>
-                      <p className="text-sm">حدث خطأ أثناء معالجة الطلب. يرجى التأكد من اتصالك بالإنترنت والمحاولة مرة أخرى.</p>
+                      <p className="text-sm mb-1">حدث خطأ أثناء معالجة الطلب. التفاصيل التقنية:</p>
+                      <code className="block bg-red-100 p-2 rounded text-xs font-mono dir-ltr text-left">
+                        {activeTask.errorMessage || "Unknown Error"}
+                      </code>
                     </div>
                  </div>
               )}
