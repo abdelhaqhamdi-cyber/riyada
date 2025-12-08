@@ -1,6 +1,6 @@
 import React from 'react';
 import { ProjectTask, TaskStatus } from '../types';
-import { Layers, Server, ShieldCheck, ArrowLeft, Globe, Smartphone, Moon, BrainCircuit, Bot, Activity, Star, Database, Layout, Search, Calendar, CreditCard, ClipboardCheck, Trophy, Sparkles, LayoutDashboard, Banknote, Workflow, Rocket, Megaphone, LineChart, ShoppingBag, Map, BarChart3 } from 'lucide-react';
+import { Layers, Server, ShieldCheck, ArrowLeft, Globe, Smartphone, Moon, BrainCircuit, Bot, Activity, Star, Database, Layout, Search, Calendar, CreditCard, ClipboardCheck, Trophy, Sparkles, LayoutDashboard, Banknote, Workflow, Rocket, Megaphone, LineChart, ShoppingBag, Map, BarChart3, DatabaseZap, Crosshair, Medal, Award, UserCheck, Building2, Wrench, FileSignature, TrendingUp, PieChart, Briefcase, Landmark, UserCog, BadgePercent, Package, FileText, Lock, Ticket, ToggleLeft, Users } from 'lucide-react';
 
 interface TaskCardProps {
   task: ProjectTask;
@@ -10,6 +10,7 @@ interface TaskCardProps {
 
 export const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, isActive }) => {
   const getIcon = () => {
+    // Initial Tasks
     if (task.title.includes('Microservices') || task.title.includes('البنية')) return <Server className="w-6 h-6" />;
     if (task.title.includes('Auth') || task.title.includes('المصادقة')) return <ShieldCheck className="w-6 h-6" />;
     if (task.title.includes('i18n') || task.title.includes('التدويل')) return <Globe className="w-6 h-6" />;
@@ -40,7 +41,39 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, isActive }) =
     if (task.title.includes('Benchmarking') || task.title.includes('المقارنة')) return <BarChart3 className="w-6 h-6" />;
     if (task.title.includes('Sponsorship') || task.title.includes('رعاية')) return <Trophy className="w-6 h-6" />;
     if (task.title.includes('Branding') || task.title.includes('تخصيص')) return <LayoutDashboard className="w-6 h-6" />;
+
+    // Hyper-Personalization
+    if (task.title.includes('Dynamic') || task.title.includes('مخططات')) return <DatabaseZap className="w-6 h-6" />;
+    if (task.title.includes('Precision') || task.title.includes('الدقيق')) return <Crosshair className="w-6 h-6" />;
+    if (task.title.includes('Leaderboards') || task.title.includes('الصدارة')) return <Medal className="w-6 h-6" />;
+    if (task.title.includes('Gamification') || task.title.includes('الشارات')) return <Award className="w-6 h-6" />;
+    if (task.title.includes('Personalized Dashboard') || task.title.includes('اللاعب المخصصة')) return <UserCheck className="w-6 h-6" />;
     
+    // Smart Venue Management System (SVMS)
+    if (task.title.includes('Unified Resource') || task.title.includes('الموارد المتعددة')) return <Building2 className="w-6 h-6" />;
+    if (task.title.includes('Pricing Engine') || task.title.includes('التسعير الديناميكي')) return <TrendingUp className="w-6 h-6" />;
+    if (task.title.includes('Maintenance') || task.title.includes('الصيانة')) return <Wrench className="w-6 h-6" />;
+    if (task.title.includes('Contracts') || task.title.includes('العقود')) return <FileSignature className="w-6 h-6" />;
+    if (task.title.includes('Venue BI') || task.title.includes('ذكاء الأعمال')) return <PieChart className="w-6 h-6" />;
+    if (task.title.includes('Investment') || task.title.includes('الاستثمار')) return <Briefcase className="w-6 h-6" />;
+
+    // Owner Personas
+    if (task.title.includes('Persona Engine') || task.title.includes('تخصيص نمط المالك')) return <UserCog className="w-6 h-6" />;
+    if (task.title.includes('Profit-Driven') || task.title.includes('القطاع الخاص')) return <BadgePercent className="w-6 h-6" />;
+    if (task.title.includes('Municipal') || task.title.includes('المرافق العامة')) return <Landmark className="w-6 h-6" />;
+
+    // Hybrid & Advanced Operations (v6)
+    if (task.title.includes('Hybrid Pricing') || task.title.includes('التسعير الهجين')) return <Ticket className="w-6 h-6" />;
+    if (task.title.includes('Asset') || task.title.includes('الأصول')) return <Package className="w-6 h-6" />;
+    if (task.title.includes('Dual-Mode') || task.title.includes('التقارير المزدوج')) return <FileText className="w-6 h-6" />;
+    if (task.title.includes('Lost Demand') || task.title.includes('الطلب الضائع')) return <LineChart className="w-6 h-6" />;
+    if (task.title.includes('ACL') || task.title.includes('الصلاحيات')) return <Lock className="w-6 h-6" />;
+
+    // Technical Harmony (v7)
+    if (task.title.includes('Flexible Data') || task.title.includes('البنية المرنة')) return <Database className="w-6 h-6" />;
+    if (task.title.includes('Mode Toggle') || task.title.includes('التبديل بين الأنماط')) return <ToggleLeft className="w-6 h-6" />;
+    if (task.title.includes('Consumer Behavior') || task.title.includes('سلوك المستهلك')) return <Users className="w-6 h-6" />;
+
     return <Layers className="w-6 h-6" />;
   };
 

@@ -17,12 +17,13 @@ import {
   Trash2,
   RefreshCw,
   Play,
-  Square
+  Square,
+  FileText
 } from 'lucide-react';
 
-// Updated storage key to ensure new tasks (v2) are loaded for the user
-const STORAGE_KEY = 'muhandis_tasks_v2';
-const ACTIVE_TASK_KEY = 'muhandis_active_task_v2';
+// Updated storage key to ensure new tasks (v7) are loaded for the user
+const STORAGE_KEY = 'muhandis_tasks_v7';
+const ACTIVE_TASK_KEY = 'muhandis_active_task_v7';
 
 const App: React.FC = () => {
   // 1. Persistence Logic: Load from localStorage or fall back to INITIAL_TASKS
@@ -87,7 +88,7 @@ const App: React.FC = () => {
     ));
   };
 
-  // 3. Export Logic
+  // 3. Export Logic (Single Task)
   const handleDownload = () => {
     if (!activeTask || !activeTask.result) return;
     
@@ -95,6 +96,41 @@ const App: React.FC = () => {
     const file = new Blob([activeTask.result], {type: 'text/markdown'});
     element.href = URL.createObjectURL(file);
     element.download = `${activeTask.title.replace(/\s+/g, '_')}_spec.md`;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
+
+  // 4. Export Logic (Full Project Report) - ADDED FOR FIELD READINESS
+  const handleExportFullProject = () => {
+    if (tasks.every(t => !t.result)) {
+      alert("لا يوجد محتوى مكتمل لتصديره. يرجى توليد المهام أولاً.");
+      return;
+    }
+
+    const completedTasks = tasks.filter(t => t.status === TaskStatus.COMPLETED && t.result);
+    let fullReport = `# وثيقة المواصفات التقنية الكاملة - Muhandis AI\n`;
+    fullReport += `تاريخ التصدير: ${new Date().toLocaleDateString('ar-EG')}\n\n`;
+    fullReport += `## جدول المحتويات\n`;
+    
+    completedTasks.forEach((task, index) => {
+      fullReport += `${index + 1}. [${task.title}](#task-${task.id})\n`;
+    });
+    fullReport += `\n---\n\n`;
+
+    completedTasks.forEach((task, index) => {
+      fullReport += `<div id="task-${task.id}"></div>\n\n`;
+      fullReport += `# ${index + 1}. ${task.title}\n\n`;
+      fullReport += `**الهدف:** ${task.goal}\n\n`;
+      fullReport += `### المتطلبات:\n${task.prompt}\n\n`;
+      fullReport += `### المواصفات الفنية:\n\n${task.result}\n\n`;
+      fullReport += `---\n\n`;
+    });
+
+    const element = document.createElement("a");
+    const file = new Blob([fullReport], {type: 'text/markdown'});
+    element.href = URL.createObjectURL(file);
+    element.download = `MuhandisAI_Full_Project_Spec_${new Date().toISOString().slice(0,10)}.md`;
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
@@ -126,23 +162,19 @@ const App: React.FC = () => {
 
   // Simplified Batch Generation Logic
   const handleBatchGenerate = async () => {
-    // Determine which tasks need processing
     const pendingTasks = tasks.filter(t => t.status === TaskStatus.PENDING || t.status === TaskStatus.FAILED);
     const allCompleted = tasks.length > 0 && pendingTasks.length === 0;
 
     let tasksToProcessIds: string[] = [];
 
     if (pendingTasks.length > 0) {
-      // Process pending tasks. No confirmation needed to start working.
       tasksToProcessIds = pendingTasks.map(t => t.id);
     } else if (allCompleted) {
-      // If everything is done, ask before re-doing everything
       if (!window.confirm("جميع المهام مكتملة. هل تريد إعادة توليد جميع المهام؟")) {
         return;
       }
       tasksToProcessIds = tasks.map(t => t.id);
     } else {
-      // No tasks at all
       return;
     }
 
@@ -152,27 +184,17 @@ const App: React.FC = () => {
     try {
       for (const id of tasksToProcessIds) {
         if (stopBatchRef.current) break;
-
-        // Find the task data. 
-        // Note: We use the 'tasks' from the closure, which is valid for reading the prompt.
         const task = tasks.find(t => t.id === id);
         if (!task) continue;
 
-        // 1. Focus UI on the current task being processed
         setActiveTaskId(id);
-
-        // 2. Set Status to Processing
         setTasks(prev => prev.map(t => t.id === id ? { ...t, status: TaskStatus.PROCESSING } : t));
-
-        // 3. Artificial delay to allow UI render and prevent API rate limits
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        await new Promise(resolve => setTimeout(resolve, 1500)); // Delay for UX and Rate limits
 
         if (stopBatchRef.current) break;
 
         try {
            const result = await generateTechnicalSpec(task.prompt);
-           
-           // Update Status to Completed
            setTasks(prev => prev.map(t => t.id === id ? { ...t, status: TaskStatus.COMPLETED, result } : t));
         } catch (error) {
            console.error(`Error generating task ${id}:`, error);
@@ -268,6 +290,15 @@ const App: React.FC = () => {
         </div>
         
         <div className="p-4 border-t border-slate-100 bg-slate-50 space-y-3">
+          {/* Export Full Project Button - New for Readiness */}
+          <button 
+            onClick={handleExportFullProject}
+            className="w-full flex items-center justify-center gap-2 bg-white text-slate-700 py-2 rounded-lg text-sm font-bold border border-slate-300 hover:bg-slate-50 hover:text-primary hover:border-primary transition-colors shadow-sm"
+          >
+            <FileText className="w-4 h-4" />
+             تصدير التقرير الكامل
+          </button>
+
           {/* Batch Processing Control */}
           <div className="flex gap-2">
             {isBatchProcessing ? (
