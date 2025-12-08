@@ -20,12 +20,14 @@ import {
   Square,
   FileText,
   Upload,
-  FileJson
+  FileJson,
+  HardDrive
 } from 'lucide-react';
 
 // Updated storage key to ensure new tasks (v8) are loaded for the user
 const STORAGE_KEY = 'muhandis_tasks_v8';
 const ACTIVE_TASK_KEY = 'muhandis_active_task_v8';
+const AUTO_SAVE_KEY = 'muhandis_auto_save_pref';
 
 const App: React.FC = () => {
   // 1. Persistence Logic: Load from localStorage or fall back to INITIAL_TASKS
@@ -47,6 +49,11 @@ const App: React.FC = () => {
   // Load active task ID from storage
   const [activeTaskId, setActiveTaskId] = useState<string | null>(() => {
     return localStorage.getItem(ACTIVE_TASK_KEY);
+  });
+
+  // Load auto-save preference
+  const [autoSaveToDisk, setAutoSaveToDisk] = useState<boolean>(() => {
+    return localStorage.getItem(AUTO_SAVE_KEY) === 'true';
   });
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -72,6 +79,11 @@ const App: React.FC = () => {
     }
   }, [activeTaskId]);
 
+  // Save auto-save preference
+  useEffect(() => {
+    localStorage.setItem(AUTO_SAVE_KEY, String(autoSaveToDisk));
+  }, [autoSaveToDisk]);
+
   const activeTask = tasks.find(t => t.id === activeTaskId);
 
   const handleTaskClick = (task: ProjectTask) => {
@@ -94,16 +106,20 @@ const App: React.FC = () => {
   };
 
   // 3. Export Logic (Single Task)
-  const handleDownload = () => {
-    if (!activeTask || !activeTask.result) return;
+  const downloadTask = (task: ProjectTask) => {
+    if (!task.result) return;
     
     const element = document.createElement("a");
-    const file = new Blob([activeTask.result], {type: 'text/markdown'});
+    const file = new Blob([task.result], {type: 'text/markdown'});
     element.href = URL.createObjectURL(file);
-    element.download = `${activeTask.title.replace(/\s+/g, '_')}_spec.md`;
+    element.download = `${task.title.replace(/\s+/g, '_')}_spec.md`;
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
+  };
+
+  const handleDownloadCurrent = () => {
+    if (activeTask) downloadTask(activeTask);
   };
 
   // 4. Export Full Project Report (Markdown)
@@ -193,13 +209,16 @@ const App: React.FC = () => {
     try {
       const result = await generateTechnicalSpec(activeTask.prompt);
       
+      const updatedTask = { ...activeTask, status: TaskStatus.COMPLETED, result: result };
+      
       setTasks(prev => prev.map(t => 
-        t.id === activeTask.id ? { 
-          ...t, 
-          status: TaskStatus.COMPLETED, 
-          result: result 
-        } : t
+        t.id === activeTask.id ? updatedTask : t
       ));
+
+      if (autoSaveToDisk) {
+        downloadTask(updatedTask);
+      }
+
     } catch (error) {
        console.error("Task generation failed:", error);
        const errorMsg = error instanceof Error ? error.message : "حدث خطأ غير معروف";
@@ -244,7 +263,13 @@ const App: React.FC = () => {
 
         try {
            const result = await generateTechnicalSpec(task.prompt);
-           setTasks(prev => prev.map(t => t.id === id ? { ...t, status: TaskStatus.COMPLETED, result } : t));
+           const updatedTask = { ...task, status: TaskStatus.COMPLETED, result };
+           setTasks(prev => prev.map(t => t.id === id ? updatedTask : t));
+           
+           if (autoSaveToDisk) {
+             downloadTask(updatedTask);
+           }
+
         } catch (error) {
            console.error(`Error generating task ${id}:`, error);
            const errorMsg = error instanceof Error ? error.message : "خطأ غير معروف";
@@ -349,6 +374,24 @@ const App: React.FC = () => {
         </div>
         
         <div className="p-4 border-t border-slate-100 bg-slate-50 space-y-3">
+          
+          {/* Auto Save Toggle */}
+          <div 
+            onClick={() => setAutoSaveToDisk(!autoSaveToDisk)}
+            className={`
+              flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all
+              ${autoSaveToDisk ? 'bg-green-50 border-green-200' : 'bg-white border-slate-200 hover:bg-slate-50'}
+            `}
+          >
+            <div className="flex items-center gap-2">
+              <HardDrive className={`w-4 h-4 ${autoSaveToDisk ? 'text-green-600' : 'text-slate-400'}`} />
+              <div className="text-xs font-bold text-slate-700">حفظ الملفات تلقائياً</div>
+            </div>
+            <div className={`w-8 h-4 rounded-full p-0.5 transition-colors ${autoSaveToDisk ? 'bg-green-500' : 'bg-slate-300'}`}>
+              <div className={`w-3 h-3 bg-white rounded-full shadow-sm transition-transform ${autoSaveToDisk ? 'translate-x-[-16px]' : ''}`}></div>
+            </div>
+          </div>
+
           {/* Data Management & Export Area */}
           <div className="grid grid-cols-2 gap-2 mb-2">
             <button 
@@ -546,7 +589,7 @@ const App: React.FC = () => {
                           إعادة التوليد
                         </button>
                         <button 
-                          onClick={handleDownload}
+                          onClick={handleDownloadCurrent}
                           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-slate-800 rounded-lg hover:bg-slate-700 shadow-sm transition-colors"
                         >
                           <Download className="w-3.5 h-3.5" />
