@@ -1,6 +1,6 @@
 import React from 'react';
 import { ProjectTask, TaskStatus } from '../types';
-import { Layers, Server, ShieldCheck, ArrowLeft, Globe, Smartphone, Moon, BrainCircuit, Bot, Activity, Star, Database, Layout, Search, Calendar, CreditCard, ClipboardCheck, Trophy, Sparkles, LayoutDashboard, Banknote, Workflow, Rocket, Megaphone } from 'lucide-react';
+import { Layers, Server, ShieldCheck, ArrowLeft, Globe, Smartphone, Moon, BrainCircuit, Bot, Activity, Star, Database, Layout, Search, Calendar, CreditCard, ClipboardCheck, Trophy, Sparkles, LayoutDashboard, Banknote, Workflow, Rocket, Megaphone, LineChart, ShoppingBag, Map, BarChart3 } from 'lucide-react';
 
 interface TaskCardProps {
   task: ProjectTask;
@@ -32,6 +32,15 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, isActive }) =
     if (task.title.includes('CI/CD') || task.title.includes('أنابيب')) return <Workflow className="w-6 h-6" />;
     if (task.title.includes('Deployment') || task.title.includes('النشر')) return <Rocket className="w-6 h-6" />;
     if (task.title.includes('Launch') || task.title.includes('الإطلاق')) return <Megaphone className="w-6 h-6" />;
+    
+    // Vendor & Advanced Analytics
+    if (task.title.includes('Time Series') || task.title.includes('الزمنية')) return <LineChart className="w-6 h-6" />;
+    if (task.title.includes('Basket') || task.title.includes('سلة')) return <ShoppingBag className="w-6 h-6" />;
+    if (task.title.includes('Geospatial') || task.title.includes('المكانية') || task.title.includes('الخريطة')) return <Map className="w-6 h-6" />;
+    if (task.title.includes('Benchmarking') || task.title.includes('المقارنة')) return <BarChart3 className="w-6 h-6" />;
+    if (task.title.includes('Sponsorship') || task.title.includes('رعاية')) return <Trophy className="w-6 h-6" />;
+    if (task.title.includes('Branding') || task.title.includes('تخصيص')) return <LayoutDashboard className="w-6 h-6" />;
+    
     return <Layers className="w-6 h-6" />;
   };
 
