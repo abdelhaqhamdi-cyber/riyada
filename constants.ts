@@ -1,13 +1,335 @@
 import { ProjectTask, TaskStatus } from './types';
 
+// The strategic execution order for batch processing.
+// This ensures that foundational tasks are generated before dependent tasks.
+export const EXECUTION_ORDER: string[] = [
+  // Phase 1: Foundation & Core Architecture
+  '63', // Final System Architecture (Sets the master plan)
+  '1',  // Backend Architecture (Microservices)
+  '10', // Database Schema (Detailed ERD)
+  '64', // Database Implementation (SQL Code)
+  '23', // CI/CD Pipeline (Infrastructure setup)
+
+  // Phase 2: Backend Skeleton (Core Services)
+  '2',  // Auth API
+  '9',  // Ratings & Reviews System
+  '14', // Advanced Search API
+  '15', // Booking Feature Logic
+  '16', // Payment Gateway Integration
+  '18', // Ratings API Implementation
+  '65', // Backend Development (Code Generation)
+
+  // Phase 3: Frontend Skeleton & Core UI
+  '4',  // UI/UX Design (Foundation for components)
+  '11', // Mobile App Shell (Project Setup)
+  '12', // UI Components Design
+  '3',  // Internationalization (i18n)
+  '5',  // Dark Mode Implementation
+  '13', // Auth Integration (Frontend)
+  '66', // Frontend Development (Code Generation)
+  
+  // Phase 4: Core Features & AI Integration
+  '8',  // Health API Integration
+  '19', // Challenges System Development
+  '6',  // Recommendation Engine
+  '7',  // AI Assistant (Concept)
+  '20', // LLM Integration (Implementation)
+
+  // Phase 5: E-commerce & Vendor Foundation
+  '26', // Headless Commerce Architecture
+  '33', // Structured Content (Data Models)
+  '34', // Smart Calendar & Pricing
+  '35', // Storefront Branding
+  '36', // SHEO Engine
+  
+  // Phase 6: Advanced E-commerce & Logistics
+  '27', // AI & AR Shopping Experience
+  '28', // Smart Logistics 4.0
+  '29', // AI Dynamic Pricing
+  
+  // Phase 7: Vendor Tools & Community Engagement
+  '30', // Vendor Super-Dashboard
+  '31', // Geo-Targeting Engine
+  '32', // Sponsorship Hub
+  
+  // Phase 8: Data Analytics & Business Intelligence
+  '37', // Time Series Analysis
+  '38', // Market Basket Analysis
+  '39', // Geospatial Analytics
+  '40', // Benchmarking Engine
+  '62', // Consumer Behavior Analysis
+
+  // Phase 9: Hyper-Personalization & Gamification
+  '41', // Dynamic Sport Profiles
+  '42', // Precision AI Engine
+  '43', // Segmented Leaderboards
+  '44', // Advanced Gamification
+  '45', // Personalized Dashboard
+  
+  // Phase 10: Smart Venue Management System (SVMS)
+  '46', // Unified Resource Management
+  '47', // AI Dynamic Pricing Engine (for Venues)
+  '48', // Maintenance & Operations
+  '49', // Recurring Contracts Manager
+  '50', // Venue BI & Analytics
+  '51', // Investment AI Advisor
+  
+  // Phase 11: Owner Personas & Hybrid Operations
+  '52', // Owner Persona Engine
+  '53', // Profit-Driven Dashboard
+  '54', // Municipal Management System
+  '55', // Hybrid Pricing & Subsidy Engine
+  '56', // Smart Asset & Inventory
+  '57', // Dual-Mode Reporting
+  '58', // Lost Demand & Investment Analysis
+  '59', // Hierarchical ACL System
+  '60', // Flexible Data Architecture
+  '61', // Mode Toggle UI
+  
+  // Phase 12: Admin & Monetization
+  '21', // Admin Dashboard
+  '22', // Revenue Split & Commissions
+
+  // Phase 13: Finalization, Testing & Launch
+  '17', // QA & Testing Strategy
+  '67', // System Integration
+  '24', // Deployment & Monitoring
+  '25', // Launch Strategy
+];
+
+
 // Pre-populating with the user's specific requests
 export const INITIAL_TASKS: ProjectTask[] = [
   {
     id: '1',
     title: 'تصميم البنية الخلفية (Microservices)',
-    prompt: 'أنشئ بنية خلفية (Backend Architecture) تعتمد على Microservices باستخدام Python (Django Rest Framework) لاستضافة المنصة الرياضية. يجب أن تدعم البنية التوسع الأفقي (Horizontal Scaling) وأن تكون جاهزة للنشر على Kubernetes. حدد النماذج الأولية (Models) لجداول: المستخدم (User), المدرب (Provider), و الحجز (Booking) مع العلاقات الأساسية.',
-    goal: 'إنشاء أساس قوي وقابل للتوسع (Microservices).',
-    status: TaskStatus.PENDING,
+    prompt: 'أنشئ بنية خلفية (Backend Architecture) تعتمد على Microservices باستخدام Python (Django Rest Framework) لاستضافة المنصة الرياضية. يجب أن تدعم البنية التوسع الأفقي (Horizontal Scaling) وأن تكون جاهزة للنشر على Kubernetes.\n\nالمطلوب:\n1. مخطط بياني للبنية (Architecture Diagram) يوضح الخدمات وتدفق البيانات.\n2. مخطط علاقات الكيانات (ERD) لقاعدة البيانات.\n3. كود النماذج (Models) الأساسية لـ: المستخدم (User)، المدرب (Provider)، والحجز (Booking).',
+    goal: 'إنشاء أساس قوي وقابل للتوسع (Microservices) مدعوم بمخططات بصرية.',
+    status: TaskStatus.COMPLETED,
+    result: `# تصميم البنية الخلفية المفصل (Detailed Microservices Architecture)
+
+هذه الوثيقة هي **إعادة تفصيل وتوسيع** للمواصفات الأولية للبنية الخلفية. تم إضافة تفاصيل حول نقاط النهاية (Endpoints)، أنماط الاتصال، ونماذج النشر على Kubernetes لتقديم رؤية تنفيذية كاملة.
+
+### 1. مخطط البنية وتدفق البيانات (Architecture Diagram)
+
+البنية الأساسية تظل كما هي، معتمدة على بوابة API لتوجيه الطلبات إلى الخدمات المصغرة المتخصصة.
+
+\`\`\`mermaid
+graph TD
+    Client[Mobile/Web App] -->|HTTPS/REST API| Gateway[API Gateway / Nginx Ingress]
+    
+    subgraph Cluster [Kubernetes Cluster]
+        Gateway -->|/api/auth/**| Auth[Auth Service]
+        Gateway -->|/api/bookings/**| Booking[Booking Service]
+        Gateway -->|/api/search/**| Search[Search Service]
+        
+        Auth --> DB_Auth[(User DB - PostgreSQL)]
+        Booking --> DB_Booking[(Booking DB - PostgreSQL)]
+        Search --> DB_Search[(Denormalized Search DB)]
+        Search --> Redis[(Redis Cache)]
+        
+        Booking -->(event) Broker{RabbitMQ / Kafka}
+        Broker -->(event) Notification[Notification Service]
+        Broker -->(event) Analytics[Analytics Service]
+    end
+    
+    style Gateway fill:#f9f,stroke:#333,stroke-width:2px
+\`\`\`
+
+---
+
+### 2. تفصيل الخدمات ونقاط النهاية (Services & API Endpoints)
+
+#### أ. خدمة المصادقة (Auth Service)
+- **المسؤولية:** إدارة المستخدمين، التسجيل، تسجيل الدخول، إصدار وتجديد JWT Tokens.
+- **قاعدة البيانات:** مستقلة، تحتوي على جدول المستخدمين مع بيانات الاعتماد المشفرة.
+- **نقاط النهاية الرئيسية:**
+  - \`POST /api/auth/register\`: تسجيل مستخدم جديد.
+  - \`POST /api/auth/login\`: تسجيل الدخول وإرجاع \`access\` و \`refresh\` tokens.
+  - \`POST /api/auth/token/refresh\`: تجديد صلاحية \`access token\` باستخدام \`refresh token\`.
+  - \`GET /api/auth/me\`: الحصول على بيانات المستخدم الحالي (يتطلب توكن مصادق).
+
+#### ب. خدمة الحجز (Booking Service)
+- **المسؤولية:** إدارة بيانات المدربين والمرافق، إنشاء الحجوزات، التحقق من التوفر.
+- **قاعدة البيانات:** تحتوي على جداول الحجوزات، المدربين، والتقييمات.
+- **نقاط النهاية الرئيسية:**
+  - \`GET /api/bookings/\`: الحصول على قائمة حجوزات المستخدم الحالي.
+  - \`POST /api/bookings/\`: إنشاء حجز جديد.
+  - \`GET /api/providers/{id}\`: عرض تفاصيل مدرب/مرفق معين.
+  - \`POST /api/bookings/{id}/review\`: إضافة تقييم لحجز مكتمل.
+
+#### ج. أنماط الاتصال (Communication Patterns)
+- **الاتصال المتزامن (Synchronous):** يتم استخدام REST API (عبر بوابة API) للعمليات التي تتطلب استجابة فورية من المستخدم، مثل تسجيل الدخول أو إنشاء حجز.
+- **الاتصال غير المتزامن (Asynchronous):** عند تأكيد حجز جديد، تقوم خدمة الحجز بنشر حدث (event) مثل \`booking_confirmed\` إلى وسيط الرسائل (Message Broker). الخدمات الأخرى مثل **خدمة الإشعارات** تستمع لهذه الأحداث لإرسال بريد إلكتروني أو إشعار فوري للمستخدم دون تعطيل الاستجابة الأولية.
+
+---
+
+### 3. مخطط قاعدة البيانات (Database Schema - ERD)
+
+المخطط المفاهيمي للعلاقات يبقى كما هو، مع التأكيد على نمط **"قاعدة بيانات لكل خدمة"** في التنفيذ الفعلي لمنع التبعيات المباشرة بين الخدمات.
+
+\`\`\`mermaid
+erDiagram
+    User ||--o{ Booking : makes
+    User {
+        int id PK
+        string email
+        string role "CLIENT, PROVIDER, ADMIN"
+        string phone
+        datetime date_joined
+    }
+    
+    Provider ||--o{ Booking : receives
+    Provider |o--|| User : extends
+    Provider {
+        int id PK
+        int user_id FK
+        text bio
+        float rating
+        geometry location
+    }
+    
+    Booking {
+        int id PK
+        int client_id FK
+        int provider_id FK
+        datetime start_time
+        datetime end_time
+        string status "PENDING, CONFIRMED, CANCELLED"
+        decimal price
+    }
+\`\`\`
+
+---
+
+### 4. تطبيق النماذج (Django Implementation)
+
+الكود المبدئي لنماذج خدمة الحجز يظل كما هو لضمان الاتساق.
+
+\`\`\`python
+# filename: services/booking/models.py
+from django.db import models
+from django.conf import settings
+from django.utils.translation import gettext_lazy as _
+
+class User(models.Model):
+    """
+    نسخة مبسطة من المستخدم داخل خدمة الحجز.
+    يتم مزامنة البيانات الأساسية فقط من خدمة المصادقة (Auth Service).
+    """
+    id = models.IntegerField(primary_key=True)
+    email = models.EmailField()
+    
+    def __str__(self):
+        return self.email
+
+class ServiceProvider(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='provider_profile')
+    bio = models.TextField(_("Bio"), blank=True)
+    rating = models.DecimalField(_("Rating"), max_digits=3, decimal_places=2, default=5.0)
+    # ملاحظة: في الإنتاج يفضل استخدام GeoDjango مع PostGIS
+    latitude = models.FloatField(_("Latitude"))
+    longitude = models.FloatField(_("Longitude"))
+
+    class Meta:
+        db_table = 'service_providers'
+
+class Booking(models.Model):
+    class Status(models.TextChoices):
+        PENDING = 'PENDING', _('Pending')
+        CONFIRMED = 'CONFIRMED', _('Confirmed')
+        CANCELLED = 'CANCELLED', _('Cancelled')
+        COMPLETED = 'COMPLETED', _('Completed')
+
+    client = models.ForeignKey(User, on_delete=models.CASCADE, related_name='bookings')
+    provider = models.ForeignKey(ServiceProvider, on_delete=models.CASCADE, related_name='received_bookings')
+    
+    start_time = models.DateTimeField(_("Start Time"))
+    end_time = models.DateTimeField(_("End Time"))
+    
+    status = models.CharField(
+        max_length=10,
+        choices=Status.choices,
+        default=Status.PENDING
+    )
+    total_price = models.DecimalField(max_digits=10, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-start_time']
+        indexes = [
+            models.Index(fields=['start_time', 'end_time']),
+            models.Index(fields=['status']),
+        ]
+
+    def __str__(self):
+        return f"Booking {self.id} - {self.status}"
+\`\`\`
+
+---
+
+### 5. النشر على Kubernetes (Deployment Example)
+
+لتحقيق متطلب "جاهز للنشر على Kubernetes"، يجب أن يكون لكل خدمة ملفات \`Dockerfile\` و ملفات توصيف K8s. فيما يلي مثال لخدمة الحجز:
+
+#### أ. ملف النشر (Deployment)
+هذا الملف يخبر Kubernetes بكيفية تشغيل الحاويات (Pods) الخاصة بالخدمة.
+
+\`\`\`yaml
+# filename: k8s/booking-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: booking-service-deployment
+spec:
+  replicas: 3 # ابدأ بـ 3 نسخ، ويمكن لـ HPA زيادتها
+  selector:
+    matchLabels:
+      app: booking-service
+  template:
+    metadata:
+      labels:
+        app: booking-service
+    spec:
+      containers:
+      - name: booking-service
+        image: your-registry/booking-service:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: booking-db-secret
+              key: url
+        readinessProbe: # فحص للتأكد من جاهزية التطبيق لاستقبال الطلبات
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+\`\`\`
+
+#### ب. ملف الخدمة (Service)
+هذا الملف يوفر عنوان شبكة داخلي ثابت للوصول إلى حاويات الخدمة.
+
+\`\`\`yaml
+# filename: k8s/booking-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: booking-service-svc
+spec:
+  selector:
+    app: booking-service
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: ClusterIP # يمكن الوصول إليه فقط داخل الكلاستر
+\`\`\`
+
+ستقوم بوابة الدخول (Ingress Controller) بتوجيه الطلبات من \`your-domain.com/api/bookings\` إلى \`booking-service-svc\`.`,
     createdAt: Date.now(),
   },
   {
@@ -325,7 +647,7 @@ export const INITIAL_TASKS: ProjectTask[] = [
   {
     id: '41',
     title: 'مخططات البيانات الرياضية الديناميكية (Dynamic Sport Profiles)',
-    prompt: 'صمم مخطط قاعدة بيانات مرن (باستخدام PostgreSQL JSONB أو NoSQL) يسمح بتعريف "سمات خاصة لكل رياضة". عند اختيار المستخدم رياضته (مثل: كرة قدم، جري، فنون قتالية)، يجب أن تظهر حقول مخصصة (مثال: "مركز اللاعب" لكرة القدم، "أفضل زمن" للجري، "الحزام" للفنون القتالية). يجب أن تكون هذه البيانات قابلة للاستعلام والفهرسة.',
+    prompt: 'صمم مخطط قاعدة بيانات مرن (باستخدام PostgreSQL JSONB أو NoSQL) يسمح بتعريف "سمات خاصة لكل رياضة". عند اختيار المستخدم رياضته (مثل: كرة قدم، جري، فنون قتالية)، يجب أن تظهر حقول مخصصة (مثال: "مركز اللاعب" لكرة القدم، "أفضل زمن" للجري، "الحزام" للفنون قتالية). يجب أن تكون هذه البيانات قابلة للاستعلام والفهرسة.',
     goal: 'بناء ملف شخصي رياضي عميق ومخصص لكل مستخدم.',
     status: TaskStatus.PENDING,
     createdAt: Date.now() - 40000,
@@ -497,5 +819,45 @@ export const INITIAL_TASKS: ProjectTask[] = [
     goal: 'مساعدة الملاك في اتخاذ قرارات استراتيجية مبنية على بيانات السوق.',
     status: TaskStatus.PENDING,
     createdAt: Date.now() - 61000,
+  },
+  {
+    id: '63',
+    title: 'التصميم التفصيلي وبنية النظام (Final System Architecture)',
+    prompt: 'بناءً على جميع المخرجات السابقة للمشروع، قم بإعداد "وثيقة تصميم معمارية النظام الشاملة" (Detailed System Architecture Design) و "هيكلية المشروع النهائية" (Final Project Structure).\n\nيجب أن تكون هذه الوثيقة المرجع التنفيذي للمطورين وتتضمن:\n\n1. **هيكلية الملفات والمجلدات (File System Structure):**\n   - قدم شجرة ملفات كاملة (File Tree) للمشروع (Monorepo أو Polyrepo).\n   - حدد مسارات ملفات التكوين (Dockerfiles, k8s manifests, ci/cd pipelines).\n   - حدد مسارات الكود المصدري لكل خدمة (Auth, Booking, Search).\n\n2. **مكدس التكنولوجيا (Technology Stack Matrix):**\n   - جدول يحدد بوضوح: اللغة، إطار العمل، قاعدة البيانات، ومنفذ الخدمة (Port) لكل Microservice.\n\n3. **المخطط المعماري الشامل (Master Architecture Diagram):**\n   - استخدم Mermaid.js لرسم تفاعل جميع الخدمات (Auth, Booking, Payment, Notification) مع البوابة (Gateway) وقواعد البيانات.\n\n4. **خطة البنية التحتية (Infrastructure):**\n   - تفاصيل نشر Kubernetes (Ingress, Services, Deployments).\n\nالهدف: توحيد الرؤية التقنية وهيكلة الملفات لبدء التنفيذ فوراً.',
+    goal: 'دمج كافة المهام في وثيقة معمارية وهيكلية موحدة.',
+    status: TaskStatus.PENDING,
+    createdAt: Date.now() - 62000,
+  },
+  {
+    id: '64',
+    title: 'مرحلة التطوير - بناء قاعدة البيانات (Database Implementation)',
+    prompt: 'بناءً على مخطط ERD النهائي (الذي تم تصميمه سابقاً)، قم بكتابة كود SQL الفعلي (أو ملفات Migration الخاصة بـ Django/Sequelize) لإنشاء الجداول في قاعدة البيانات.\n\nالمتطلبات التقنية:\n1) إنشاء الجداول الرئيسية: Users, Providers, Bookings, Reviews, Sports.\n2) تعريف المفاتيح الأساسية (Primary Keys) والأجنبية (Foreign Keys) والعلاقات بدقة.\n3) إضافة الفهارس (Indexes) اللازمة لتحسين أداء البحث (خاصة للحقول الجغرافية والتواريخ).\n4) كتابة سكربت بيانات أولية (Seed Data) لإضافة أنواع الرياضات الأساسية وحساب مسؤول (Admin) افتراضي.',
+    goal: 'تنفيذ الطبقة الفيزيائية لقاعدة البيانات وتجهيزها للاستخدام.',
+    status: TaskStatus.PENDING,
+    createdAt: Date.now() - 63000,
+  },
+  {
+    id: '65',
+    title: 'مرحلة التطوير - برمجة الواجهة الخلفية (Backend Development)',
+    prompt: 'قم بكتابة الكود المصدري (Source Code) للخدمات المصغرة الأساسية (Core Microservices) بناءً على تصميم الـ Sequence Diagram.\n\nالمطلوب:\n1) كود خدمة المصادقة (Auth Service): تنفيذ وظائف التسجيل وتسجيل الدخول وإصدار JWT.\n2) كود خدمة الحجز (Booking Service): تنفيذ الـ API Endpoints لإنشاء حجز جديد، الاستعلام عن التوفر، وإلغاء الحجز.\n3) ملف `docker-compose.yml` لتشغيل هذه الخدمات محلياً مع قاعدة البيانات.\n\nملاحظة: اكتب الكود الفعلي (Python/Node.js) مع التعليقات التوضيحية.',
+    goal: 'بناء منطق الأعمال (Business Logic) والـ APIs.',
+    status: TaskStatus.PENDING,
+    createdAt: Date.now() - 64000,
+  },
+  {
+    id: '66',
+    title: 'مرحلة التطوير - بناء الواجهة الأمامية (Frontend Development)',
+    prompt: 'قم بكتابة كود الواجهة الأمامية لتطبيق الهاتف (Mobile App) باستخدام React Native أو Flutter (حسب ما تم اختياره في التكنولوجيا).\n\nالمطلوب:\n1) تنفيذ شاشة تسجيل الدخول (Login Screen) وربطها بـ API المصادقة.\n2) تنفيذ شاشة "حجز ملعب" (Booking Screen) التي تعرض الملاعب المتاحة وتسمح للمستخدم باختيار الوقت.\n3) استخدام State Management (مثل Context API أو Provider) لإدارة حالة المستخدم.\n4) تنسيق الواجهة (Styling) لتكون متجاوبة وتدعم الوضع المظلم.',
+    goal: 'تحويل التصاميم إلى واجهة مستخدم تفاعلية وقابلة للاستخدام.',
+    status: TaskStatus.PENDING,
+    createdAt: Date.now() - 65000,
+  },
+  {
+    id: '67',
+    title: 'مرحلة التطوير - التكامل والربط (System Integration)',
+    prompt: 'هذه هي مرحلة تجميع النظام (Integration Phase). قم بكتابة الكود والإعدادات اللازمة لربط الواجهة الأمامية بالخلفية بشكل كامل.\n\nالمطلوب:\n1) إعداد Gateway (مثل Nginx أو API Gateway) لتوجيه الطلبات من التطبيق إلى الخدمات المناسبة.\n2) كتابة كود الـ API Client في الواجهة الأمامية (Axios/Fetch) للتعامل مع الأخطاء (Error Handling) وإعادة المحاولة.\n3) سيناريو اختبار تكاملي (Integration Test Script) يتحقق من دورة حياة كاملة: تسجيل مستخدم -> بحث عن ملعب -> إجراء حجز.',
+    goal: 'ضمان عمل النظام كوحدة واحدة متكاملة (End-to-End Functionality).',
+    status: TaskStatus.PENDING,
+    createdAt: Date.now() - 66000,
   }
 ];

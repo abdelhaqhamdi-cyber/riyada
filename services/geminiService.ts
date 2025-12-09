@@ -4,16 +4,28 @@ import { GoogleGenAI } from "@google/genai";
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const SYSTEM_INSTRUCTION = `
-أنت مهندس برمجيات خبير (Senior Software Architect) متخصص في Python, Django, Microservices, و Kubernetes.
-مهمتك هي أخذ المتطلبات التقنية وتحويلها إلى خطة تنفيذية مفصلة، أكواد برمجية (Code Snippets)، وتصاميم معمارية.
+أنت مهندس برمجيات خبير (Senior Software Architect) ومطور ويب شامل.
+مهمتك هي كتابة مواصفات تقنية وأكواد قابلة للتنفيذ المباشر.
 
-القواعد:
-1. الإجابة يجب أن تكون باللغة العربية بشكل أساسي، مع المصطلحات التقنية بالإنجليزية.
-2. الكود يجب أن يكون نظيفاً (Clean Code) وموثقاً.
-3. استخدم Markdown لتنسيق الإجابة (عناوين، قوائم، كتل برمجية).
-4. عند طلب Django Models، تأكد من كتابة كود Python صحيح.
-5. عند طلب API Design، وضح Endpoints, Methods, Request Body, Response.
-6. فكر بعمق وتأنى قبل الإجابة لضمان تغطية جميع الجوانب (Chain of Thought).
+=== 1. قواعد السياق (Project Context) ===
+ستتلقى في الطلب قسماً بعنوان "سياق المشروع الحالي". يحتوي هذا على ملخصات أو أكواد من مهام سابقة تم إنجازها.
+- **يجب** عليك احترام القرارات التقنية المتخذة سابقاً (مثلاً: إذا تم اختيار PostgreSQL في مهمة سابقة، لا تستخدم MongoDB الآن).
+- ابني على ما تم إنجازه ولا تكرر الأساسيات إلا إذا طُلب منك.
+
+=== 2. قواعد المخططات البيانية (Visuals & Diagrams) ===
+عندما يتطلب الطلب تصميماً للبنية (Architecture) أو قاعدة البيانات (Database) أو تدفق العمليات (Flow):
+- **يجب دائماً** إرفاق مخططات بصرية باستخدام **Mermaid.js**.
+- استخدم \`graph TD\` للهيكلية العامة.
+- استخدم \`erDiagram\` لتصاميم قواعد البيانات والعلاقات.
+- استخدم \`sequenceDiagram\` لتدفق العمليات المعقدة.
+- ضع كود المخطط داخل كتلة كود: \`\`\`mermaid
+
+=== 3. قواعد نظام الملفات (File System Protocol) ===
+لتمكين النظام من "تنفيذ" إجاباتك وتحويلها إلى ملفات حقيقية، اتبع التالي:
+- يجب أن يبدأ كل مربع كود برمجي (غير Mermaid) بتعليق يحدد المسار: \`// filename: path/to/file\`
+- اجعل الكود كاملاً وجاهزاً للعمل.
+
+هدفنا: بناء مشروع متكامل، متسق، وموثق بشكل احترافي مع التركيز على التوضيح البصري.
 `;
 
 // Helper for delay
@@ -66,13 +78,14 @@ async function generateWithRetry(
       
       const response = await ai.models.generateContent({
         model: model,
-        contents: prompt,
+        contents: [{ parts: [{ text: prompt }] }],
         config: config,
       });
 
       if (response.text) {
         return response.text;
       }
+      throw new Error("Received an empty response from the API.");
     } catch (error: any) {
       console.warn(`Attempt ${attempt} failed for ${model}:`, error.message);
       lastError = error;
@@ -93,40 +106,38 @@ async function generateWithRetry(
   throw lastError || new Error(`Failed to generate content with ${model} after ${maxRetries} attempts.`);
 }
 
-export const generateTechnicalSpec = async (prompt: string): Promise<string> => {
-  const fullPrompt = `${SYSTEM_INSTRUCTION}\n\n=== المتطلبات التقنية للمهمة ===\n${prompt}`;
-
-  /* 
-     Robust Strategy:
-     1. Try Thinking Model (Best Quality) with retries.
-     2. If completely failed, Fallback to Standard Model (Best Stability) with retries.
-  */
+export const generateTechnicalSpec = async (prompt: string, projectContext: string = ""): Promise<string> => {
+  // Inject context into the user prompt
+  let finalPrompt = `=== المتطلبات التقنية للمهمة الحالية ===\n${prompt}\n\n`;
+  
+  if (projectContext) {
+    finalPrompt += `=== سياق المشروع (مهام مكتملة سابقاً) ===\nاستخدم المعلومات التالية لضمان الاتساق (لا تكررها، بل ابنِ عليها):\n${projectContext}\n\n`;
+  }
 
   try {
     console.log("Starting generation sequence (Thinking Mode)...");
-    return await generateWithRetry('gemini-2.5-flash', fullPrompt, {
+    return await generateWithRetry('gemini-2.5-flash', finalPrompt, {
+      systemInstruction: SYSTEM_INSTRUCTION, 
       thinkingConfig: { 
-        thinkingBudget: 1024 // Optimized budget
+        thinkingBudget: 2048 
       },
-    }, 2); // Try twice
+    }, 2); 
   } catch (thinkingError: any) {
     console.warn("Thinking mode exhausted. Switching to Standard Fallback...", thinkingError.message);
     
-    // If the error is clearly about Quota (429), we might want to stop early, 
-    // but sometimes standard model has different quota/availability, so we try fallback unless it's 401.
     if (thinkingError.status === 401) {
        throw new Error(getFriendlyErrorMessage(thinkingError));
     }
 
     try {
-      const result = await generateWithRetry('gemini-2.5-flash', fullPrompt, {
+      const result = await generateWithRetry('gemini-2.5-flash', finalPrompt, {
+        systemInstruction: SYSTEM_INSTRUCTION,
         temperature: 0.2,
-      }, 3); // Try 3 times
+      }, 3); 
       
       return result + "\n\n---\n*(ملاحظة: تم التوليد باستخدام النمط القياسي لضمان استمرارية الخدمة)*";
     } catch (fallbackError: any) {
       console.error("All generation strategies failed.", fallbackError);
-      // Return the friendly error message derived from the last error
       throw new Error(getFriendlyErrorMessage(fallbackError));
     }
   }

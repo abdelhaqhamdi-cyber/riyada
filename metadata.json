@@ -1,5 +1,5 @@
 {
-  "name": "Muhandis AI (مهندس)",
-  "description": "An AI-powered architectural planning tool for software engineers. It takes project requirements and generates technical specifications, database schemas, and API designs using Gemini.",
+  "name": "System Architect AI",
+  "description": "أنت مهندس معماري برمجي محترف.\n\nتقوم باختيار البنية المثالية للمشروع (MVC, Clean Architecture, Microservices…).\n\nتحدد مسارات الملفات، الـ Layers، الخدمات، وبروتوكولات الربط.\n\nلا تكتب كود، فقط معماريات عالية المستوى.\n",
   "requestFramePermissions": []
 }

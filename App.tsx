@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ProjectTask, TaskStatus } from './types';
-import { INITIAL_TASKS } from './constants';
+import { INITIAL_TASKS, EXECUTION_ORDER } from './constants';
 import { generateTechnicalSpec } from './services/geminiService';
 import { TaskCard } from './components/TaskCard';
 import { SimpleMarkdown } from './components/SimpleMarkdown';
@@ -13,7 +13,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Download,
-  Save,
   Trash2,
   RefreshCw,
   Play,
@@ -21,7 +20,16 @@ import {
   FileText,
   Upload,
   FileJson,
-  HardDrive
+  HardDrive,
+  Brain,
+  CloudCheck,
+  Crosshair,
+  FileCode,
+  Terminal,
+  Monitor,
+  Search,
+  Filter,
+  Check
 } from 'lucide-react';
 
 // Updated storage key to ensure new tasks (v8) are loaded for the user
@@ -30,14 +38,29 @@ const ACTIVE_TASK_KEY = 'muhandis_active_task_v8';
 const AUTO_SAVE_KEY = 'muhandis_auto_save_pref';
 
 const App: React.FC = () => {
-  // 1. Persistence Logic: Load from localStorage or fall back to INITIAL_TASKS
+  // 1. Persistence Logic: Smart Merge Strategy
   const [tasks, setTasks] = useState<ProjectTask[]>(() => {
     try {
       const savedTasks = localStorage.getItem(STORAGE_KEY);
       if (savedTasks) {
-        const parsedTasks = JSON.parse(savedTasks);
-        if (Array.isArray(parsedTasks) && parsedTasks.length > 0) {
-          return parsedTasks;
+        const parsedTasks: ProjectTask[] = JSON.parse(savedTasks);
+        if (Array.isArray(parsedTasks)) {
+           let merged = [...parsedTasks];
+           const missingFromStorage = INITIAL_TASKS.filter(
+             init => !merged.some(saved => saved.id === init.id)
+           );
+           if (missingFromStorage.length > 0) {
+             merged = [...merged, ...missingFromStorage];
+             merged.sort((a, b) => {
+                const idA = parseInt(a.id);
+                const idB = parseInt(b.id);
+                if (!isNaN(idA) && !isNaN(idB)) {
+                    return idA - idB;
+                }
+                return 0; 
+             });
+           }
+           return merged;
         }
       }
     } catch (e) {
@@ -46,31 +69,28 @@ const App: React.FC = () => {
     return INITIAL_TASKS;
   });
 
-  // Load active task ID from storage
   const [activeTaskId, setActiveTaskId] = useState<string | null>(() => {
     return localStorage.getItem(ACTIVE_TASK_KEY);
   });
 
-  // Load auto-save preference
   const [autoSaveToDisk, setAutoSaveToDisk] = useState<boolean>(() => {
     return localStorage.getItem(AUTO_SAVE_KEY) === 'true';
   });
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  
-  // Batch processing state
   const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+  const [processingMessage, setProcessingMessage] = useState<string | null>(null);
   const stopBatchRef = useRef(false);
-  
-  // File input ref for import
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Save tasks to localStorage
+  // --- Search & Filter State ---
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterStatus, setFilterStatus] = useState<'ALL' | 'COMPLETED' | 'PENDING'>('ALL');
+
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
   }, [tasks]);
 
-  // Save activeTaskId to localStorage
   useEffect(() => {
     if (activeTaskId) {
       localStorage.setItem(ACTIVE_TASK_KEY, activeTaskId);
@@ -79,18 +99,42 @@ const App: React.FC = () => {
     }
   }, [activeTaskId]);
 
-  // Save auto-save preference
   useEffect(() => {
     localStorage.setItem(AUTO_SAVE_KEY, String(autoSaveToDisk));
   }, [autoSaveToDisk]);
 
   const activeTask = tasks.find(t => t.id === activeTaskId);
 
+  // --- Filtered Tasks Logic ---
+  const filteredTasks = useMemo(() => {
+    return tasks.filter(task => {
+      const matchesSearch = task.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                            task.id.includes(searchTerm);
+      const matchesStatus = filterStatus === 'ALL' 
+        ? true 
+        : filterStatus === 'COMPLETED' 
+          ? task.status === TaskStatus.COMPLETED 
+          : task.status !== TaskStatus.COMPLETED;
+      return matchesSearch && matchesStatus;
+    });
+  }, [tasks, searchTerm, filterStatus]);
+
+
+  // --- Helper to Collect Context ---
+  // Modified to accept an optional list, defaulting to current state
+  const getProjectContext = (taskList = tasks) => {
+    const completedTasks = taskList.filter(t => t.status === TaskStatus.COMPLETED && t.result);
+    if (completedTasks.length === 0) return "";
+    
+    return completedTasks.map(t => 
+      `### المهمة المنجزة: ${t.title} (${t.id})\n${t.result}\n`
+    ).join("\n---\n");
+  };
+
   const handleTaskClick = (task: ProjectTask) => {
     setActiveTaskId(task.id);
   };
 
-  // 2. Editable Prompts Logic
   const handlePromptChange = (newPrompt: string) => {
     if (!activeTaskId) return;
     setTasks(prev => prev.map(t => 
@@ -105,10 +149,8 @@ const App: React.FC = () => {
     ));
   };
 
-  // 3. Export Logic (Single Task)
   const downloadTask = (task: ProjectTask) => {
     if (!task.result) return;
-    
     const element = document.createElement("a");
     const file = new Blob([task.result], {type: 'text/markdown'});
     element.href = URL.createObjectURL(file);
@@ -122,23 +164,21 @@ const App: React.FC = () => {
     if (activeTask) downloadTask(activeTask);
   };
 
-  // 4. Export Full Project Report (Markdown)
   const handleExportFullProject = () => {
-    if (tasks.every(t => !t.result)) {
+    const completedTasks = tasks.filter(t => t.status === TaskStatus.COMPLETED && t.result);
+
+    if (completedTasks.length === 0) {
       alert("لا يوجد محتوى مكتمل لتصديره. يرجى توليد المهام أولاً.");
       return;
     }
 
-    const completedTasks = tasks.filter(t => t.status === TaskStatus.COMPLETED && t.result);
     let fullReport = `# وثيقة المواصفات التقنية الكاملة - Muhandis AI\n`;
     fullReport += `تاريخ التصدير: ${new Date().toLocaleDateString('ar-EG')}\n\n`;
     fullReport += `## جدول المحتويات\n`;
-    
     completedTasks.forEach((task, index) => {
       fullReport += `${index + 1}. [${task.title}](#task-${task.id})\n`;
     });
     fullReport += `\n---\n\n`;
-
     completedTasks.forEach((task, index) => {
       fullReport += `<div id="task-${task.id}"></div>\n\n`;
       fullReport += `# ${index + 1}. ${task.title}\n\n`;
@@ -147,7 +187,6 @@ const App: React.FC = () => {
       fullReport += `### المواصفات الفنية:\n\n${task.result}\n\n`;
       fullReport += `---\n\n`;
     });
-
     const element = document.createElement("a");
     const file = new Blob([fullReport], {type: 'text/markdown'});
     element.href = URL.createObjectURL(file);
@@ -157,7 +196,6 @@ const App: React.FC = () => {
     document.body.removeChild(element);
   };
 
-  // 5. Backup & Restore Logic (JSON)
   const handleExportBackup = () => {
     const dataStr = JSON.stringify(tasks, null, 2);
     const element = document.createElement("a");
@@ -169,20 +207,131 @@ const App: React.FC = () => {
     document.body.removeChild(element);
   };
 
+  const handleExportToShellScript = (osType: 'unix' | 'windows') => {
+    const completedTasks = tasks.filter(t => t.status === TaskStatus.COMPLETED && t.result);
+    if (completedTasks.length === 0) {
+      alert("يرجى توليد المهام أولاً قبل إنشاء سكربت التثبيت.");
+      return;
+    }
+    if (!window.confirm(`سيقوم النظام بإنشاء ملف تشغيلي (${osType === 'unix' ? '.sh' : '.bat'}) يقوم تلقائياً بإنشاء مجلدات المشروع وكتابة الأكواد التي تم توليدها داخل الملفات المناسبة.\n\nهل تريد المتابعة؟`)) {
+      return;
+    }
+    let scriptContent = "";
+    const rootDir = "Muhandis_Project";
+    if (osType === 'unix') {
+      scriptContent += `#!/bin/bash\n\n`;
+      scriptContent += `echo "🚀 Starting Muhandis AI Project Builder..."\n`;
+      scriptContent += `mkdir -p "${rootDir}"\n`;
+      scriptContent += `cd "${rootDir}"\n\n`;
+      completedTasks.forEach(task => {
+        if (!task.result) return;
+        const safeTitle = task.title.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '');
+        scriptContent += `echo "Processing: ${task.title}..."\n`;
+        scriptContent += `mkdir -p "docs"\n`;
+        const safeDocContent = task.result.replace(/`/g, '\\`').replace(/\$/g, '\\$');
+        scriptContent += `cat << 'EOF' > "docs/${task.id}_${safeTitle}.md"\n${task.result}\nEOF\n\n`;
+        const lines = task.result.split('\n');
+        let inCodeBlock = false;
+        let currentFile = "";
+        let codeBuffer = [];
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (line.trim().startsWith('```')) {
+            if (inCodeBlock) {
+               if (currentFile) {
+                 const dirName = currentFile.substring(0, currentFile.lastIndexOf('/'));
+                 if (dirName) {
+                   scriptContent += `mkdir -p "${dirName}"\n`;
+                 }
+                 const code = codeBuffer.join('\n').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+                 scriptContent += `cat << 'EOF' > "${currentFile}"\n${code}\nEOF\n`;
+                 scriptContent += `echo "  - Created: ${currentFile}"\n`;
+               }
+               inCodeBlock = false;
+               currentFile = "";
+               codeBuffer = [];
+            } else {
+               inCodeBlock = true;
+            }
+            continue;
+          }
+          if (inCodeBlock) {
+            const filenameMatch = line.match(/^(?:\/\/|#|<!--)\s*filename:\s*([^\n\r]+)/i);
+            if (filenameMatch) {
+              currentFile = filenameMatch[1].trim();
+            } else {
+              codeBuffer.push(line);
+            }
+          }
+        }
+      });
+      scriptContent += `\necho "✅ Project build complete in folder: ${rootDir}"\n`;
+      scriptContent += `echo "📂 You can now run 'git init' to start version control."\n`;
+    } else {
+      scriptContent += `@echo off\n`;
+      scriptContent += `echo 🚀 Starting Muhandis AI Project Builder...\n`;
+      scriptContent += `mkdir "${rootDir}" 2>nul\n`;
+      scriptContent += `cd "${rootDir}"\n\n`;
+      completedTasks.forEach(task => {
+         const safeTitle = task.title.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '');
+         scriptContent += `echo Processing: ${safeTitle}...\n`;
+         scriptContent += `mkdir "docs" 2>nul\n`;
+         scriptContent += `echo (Documentation saved in app) > "docs\\${task.id}_Spec.txt"\n`;
+          const lines = task.result?.split('\n') || [];
+          let inCodeBlock = false;
+          let currentFile = "";
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (line.trim().startsWith('```')) {
+              if (inCodeBlock) {
+                 if (currentFile) {
+                   const winFile = currentFile.replace(/\//g, '\\');
+                   const lastSlash = winFile.lastIndexOf('\\');
+                   if (lastSlash !== -1) {
+                     const dir = winFile.substring(0, lastSlash);
+                     scriptContent += `mkdir "${dir}" 2>nul\n`;
+                   }
+                   scriptContent += `echo. > "${winFile}"\n`; 
+                   scriptContent += `echo [NOTE: Content needs to be copied from app due to Windows Batch limitations] >> "${winFile}"\n`;
+                 }
+                 inCodeBlock = false;
+                 currentFile = "";
+              } else {
+                 inCodeBlock = true;
+              }
+              continue;
+            }
+            if (inCodeBlock) {
+               const filenameMatch = line.match(/^(?:\/\/|#|<!--)\s*filename:\s*([^\n\r]+)/i);
+               if (filenameMatch) {
+                 currentFile = filenameMatch[1].trim();
+               }
+            }
+          }
+      });
+      scriptContent += `\necho ✅ Structure created. For full content population, use the Bash script in Git Bash or WSL.\n`;
+      scriptContent += `pause\n`;
+    }
+    const element = document.createElement("a");
+    const file = new Blob([scriptContent], {type: osType === 'unix' ? 'application/x-sh' : 'application/bat'});
+    element.href = URL.createObjectURL(file);
+    element.download = osType === 'unix' ? 'install_project.sh' : 'install_structure.bat';
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
+
   const handleImportBackup = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const content = e.target?.result as string;
         const parsed = JSON.parse(content);
-        // Basic validation
         if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].id && parsed[0].title) {
             if (window.confirm("تحذير: سيتم استبدال جميع المهام الحالية بالبيانات الموجودة في الملف. هل أنت متأكد؟")) {
                 setTasks(parsed);
-                // Reset active task to the first one in the backup
                 setActiveTaskId(parsed[0].id);
                 alert("تم استعادة النسخة الاحتياطية بنجاح.");
             }
@@ -195,30 +344,26 @@ const App: React.FC = () => {
       }
     };
     reader.readAsText(file);
-    // Reset value to allow re-uploading same file if needed
     event.target.value = '';
   };
 
   const handleGenerate = async () => {
     if (!activeTask) return;
+    
+    // COLLECT CONTEXT
+    const context = getProjectContext();
 
     setTasks(prev => prev.map(t => 
       t.id === activeTask.id ? { ...t, status: TaskStatus.PROCESSING, errorMessage: undefined } : t
     ));
 
     try {
-      const result = await generateTechnicalSpec(activeTask.prompt);
+      // Pass context to service
+      const result = await generateTechnicalSpec(activeTask.prompt, context);
       
       const updatedTask = { ...activeTask, status: TaskStatus.COMPLETED, result: result };
-      
-      setTasks(prev => prev.map(t => 
-        t.id === activeTask.id ? updatedTask : t
-      ));
-
-      if (autoSaveToDisk) {
-        downloadTask(updatedTask);
-      }
-
+      setTasks(prev => prev.map(t => t.id === activeTask.id ? updatedTask : t));
+      if (autoSaveToDisk) downloadTask(updatedTask);
     } catch (error) {
        console.error("Task generation failed:", error);
        const errorMsg = error instanceof Error ? error.message : "حدث خطأ غير معروف";
@@ -228,61 +373,114 @@ const App: React.FC = () => {
     }
   };
 
-  // Simplified Batch Generation Logic
-  const handleBatchGenerate = async () => {
-    const pendingTasks = tasks.filter(t => t.status === TaskStatus.PENDING || t.status === TaskStatus.FAILED);
-    const allCompleted = tasks.length > 0 && pendingTasks.length === 0;
-
-    let tasksToProcessIds: string[] = [];
-
-    if (pendingTasks.length > 0) {
-      tasksToProcessIds = pendingTasks.map(t => t.id);
-    } else if (allCompleted) {
-      if (!window.confirm("جميع المهام مكتملة. هل تريد إعادة توليد جميع المهام؟")) {
-        return;
-      }
-      tasksToProcessIds = tasks.map(t => t.id);
-    } else {
-      return;
-    }
-
+  const runBatchProcess = async (taskIds: string[]) => {
     setIsBatchProcessing(true);
+    setProcessingMessage("🚀 بدء التوليد الاستراتيجي...");
     stopBatchRef.current = false;
 
+    let currentTasksState = [...tasks];
+
     try {
-      for (const id of tasksToProcessIds) {
-        if (stopBatchRef.current) break;
-        const task = tasks.find(t => t.id === id);
+      for (const id of taskIds) {
+        if (stopBatchRef.current) {
+          setProcessingMessage("🛑 تم إيقاف العملية.");
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          break;
+        }
+        
+        const task = currentTasksState.find(t => t.id === id);
         if (!task) continue;
 
         setActiveTaskId(id);
+        
         setTasks(prev => prev.map(t => t.id === id ? { ...t, status: TaskStatus.PROCESSING, errorMessage: undefined } : t));
-        await new Promise(resolve => setTimeout(resolve, 1500)); // Delay for UX and Rate limits
+        setProcessingMessage(`⏳ جاري توليد: ${task.title.substring(0, 30)}...`);
+        
+        const currentContext = getProjectContext(currentTasksState);
 
-        if (stopBatchRef.current) break;
+        // Smart Throttling: Add a delay *before* the API call to respect rate limits.
+        await new Promise(resolve => setTimeout(resolve, 4000)); 
+
+        if (stopBatchRef.current) { // Check again after the delay
+          setProcessingMessage("🛑 تم إيقاف العملية.");
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          break;
+        }
 
         try {
-           const result = await generateTechnicalSpec(task.prompt);
+           const result = await generateTechnicalSpec(task.prompt, currentContext);
            const updatedTask = { ...task, status: TaskStatus.COMPLETED, result };
+           
+           currentTasksState = currentTasksState.map(t => t.id === id ? updatedTask : t);
            setTasks(prev => prev.map(t => t.id === id ? updatedTask : t));
            
-           if (autoSaveToDisk) {
-             downloadTask(updatedTask);
-           }
-
+           if (autoSaveToDisk) downloadTask(updatedTask);
         } catch (error) {
            console.error(`Error generating task ${id}:`, error);
            const errorMsg = error instanceof Error ? error.message : "خطأ غير معروف";
-           setTasks(prev => prev.map(t => t.id === id ? { ...t, status: TaskStatus.FAILED, errorMessage: errorMsg } : t));
+           
+           const failedTask = { ...task, status: TaskStatus.FAILED, errorMessage: errorMsg };
+           currentTasksState = currentTasksState.map(t => t.id === id ? failedTask : t);
+           
+           setTasks(prev => prev.map(t => t.id === id ? failedTask : t));
+
+           // Smart Error Handling: Pause for quota errors, break for fatal errors.
+           if (errorMsg.includes('Rate Limit Exceeded') || errorMsg.includes('تجاوز حد الاستخدام')) {
+                setProcessingMessage("⚠️ تم تجاوز الحصة. سيتم الانتظار لمدة دقيقة والمتابعة تلقائياً.");
+                await new Promise(resolve => setTimeout(resolve, 60000));
+           } else if (errorMsg.includes('Invalid API Key') || errorMsg.includes('مفتاح API غير صالح')) {
+                setProcessingMessage("🛑 خطأ فادح: مفتاح API غير صالح. توقفت العملية.");
+                await new Promise(resolve => setTimeout(resolve, 4000)); // Wait to show message
+                break; // Stop the whole batch process
+           }
         }
       }
     } catch (globalError) {
       console.error("Critical batch error:", globalError);
     } finally {
       setIsBatchProcessing(false);
+      if (!stopBatchRef.current) {
+        setProcessingMessage("✅ اكتملت جميع المهام!");
+      }
+      await new Promise(resolve => setTimeout(() => setProcessingMessage(null), 3000));
       stopBatchRef.current = false;
     }
   };
+
+  const handleGeneratePending = () => {
+    const pendingTasks = tasks.filter(t => t.status === TaskStatus.PENDING || t.status === TaskStatus.FAILED);
+    if (pendingTasks.length === 0) {
+        alert("لا توجد مهام متبقية. يمكنك استخدام زر 'إعادة التوليد' لتوليد كل شيء من جديد.");
+        return;
+    }
+    const pendingIds = pendingTasks.map(t => t.id);
+    // Sort the pending tasks based on the master execution plan
+    const sortedIds = pendingIds.sort((a, b) => {
+        const indexA = EXECUTION_ORDER.indexOf(a);
+        const indexB = EXECUTION_ORDER.indexOf(b);
+        // If a task is not in the master plan (e.g., user-created), it goes to the end
+        if (indexA === -1) return 1;
+        if (indexB === -1) return -1;
+        return indexA - indexB;
+    });
+    runBatchProcess(sortedIds);
+  };
+
+  const handleRegenerateAll = () => {
+      if (window.confirm("تحذير: سيتم إعادة توليد جميع المهام بالترتيب الاستراتيجي، مما قد يستهلك جزءاً كبيراً من الحصة المتاحة. هل أنت متأكد؟")) {
+          const allTaskIds = tasks.map(t => t.id);
+          // Sort all tasks based on the master execution plan
+          const sortedIds = allTaskIds.sort((a, b) => {
+              const indexA = EXECUTION_ORDER.indexOf(a);
+              const indexB = EXECUTION_ORDER.indexOf(b);
+              if (indexA === -1) return 1;
+              if (indexB === -1) return -1;
+              return indexA - indexB;
+          });
+          runBatchProcess(sortedIds);
+      }
+  };
+
 
   const handleStopBatch = () => {
     stopBatchRef.current = true;
@@ -322,39 +520,63 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden" dir="rtl">
-      {/* Hidden File Input */}
-      <input 
-        type="file" 
-        ref={fileInputRef}
-        onChange={handleImportBackup}
-        accept=".json"
-        className="hidden"
-      />
+      <input type="file" ref={fileInputRef} onChange={handleImportBackup} accept=".json" className="hidden" />
 
       {/* Sidebar */}
-      <aside 
-        className={`
-          ${isSidebarOpen ? 'w-80' : 'w-0'} 
-          bg-white border-l border-slate-200 flex-shrink-0 transition-all duration-300 flex flex-col
-        `}
-      >
-        <div className="h-16 flex items-center justify-between px-6 border-b border-slate-100">
+      <aside className={`${isSidebarOpen ? 'w-80' : 'w-0'} bg-white border-l border-slate-200 flex-shrink-0 transition-all duration-300 flex flex-col`}>
+        <div className="h-16 flex items-center justify-between px-6 border-b border-slate-100 bg-white">
           <div className="flex items-center">
             <Cpu className="w-6 h-6 text-primary ml-2" />
             <h1 className="text-xl font-bold text-slate-800 tracking-tight">Muhandis<span className="text-primary">AI</span></h1>
           </div>
         </div>
 
+        {/* Sidebar Search & Filter Area */}
+        <div className="px-4 pt-4 pb-2 space-y-3">
+          <div className="relative">
+            <Search className="w-4 h-4 absolute top-2.5 right-3 text-slate-400" />
+            <input 
+              type="text" 
+              placeholder="بحث في المهام..." 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+          </div>
+          <div className="flex gap-1">
+             <button 
+               onClick={() => setFilterStatus('ALL')}
+               className={`flex-1 py-1.5 text-xs font-bold rounded-md border transition-all ${filterStatus === 'ALL' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+             >
+               الكل
+             </button>
+             <button 
+               onClick={() => setFilterStatus('PENDING')}
+               className={`flex-1 py-1.5 text-xs font-bold rounded-md border transition-all ${filterStatus === 'PENDING' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+             >
+               متبقي
+             </button>
+             <button 
+               onClick={() => setFilterStatus('COMPLETED')}
+               className={`flex-1 py-1.5 text-xs font-bold rounded-md border transition-all ${filterStatus === 'COMPLETED' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+             >
+               مكتمل
+             </button>
+          </div>
+        </div>
+
         <div className="p-4 flex-1 overflow-y-auto">
-          <div className="flex items-center justify-between mb-6 px-2">
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">مهام المشروع</h2>
+          <div className="flex items-center justify-between mb-3 px-2">
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+               المهام ({filteredTasks.length})
+            </h2>
             <button onClick={createNewTask} className="p-1 hover:bg-slate-100 rounded text-slate-500 transition-colors" title="إضافة مهمة">
               <Plus className="w-4 h-4" />
             </button>
           </div>
 
-          <div className="space-y-3">
-            {tasks.map(task => (
+          <div className="space-y-2">
+            {filteredTasks.length > 0 ? filteredTasks.map(task => (
               <div key={task.id} className="relative group">
                 <TaskCard 
                   task={task} 
@@ -369,29 +591,16 @@ const App: React.FC = () => {
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
-            ))}
+            )) : (
+              <div className="text-center py-8 text-slate-400 text-sm">
+                لا توجد نتائج مطابقة
+              </div>
+            )}
           </div>
         </div>
         
         <div className="p-4 border-t border-slate-100 bg-slate-50 space-y-3">
           
-          {/* Auto Save Toggle */}
-          <div 
-            onClick={() => setAutoSaveToDisk(!autoSaveToDisk)}
-            className={`
-              flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all
-              ${autoSaveToDisk ? 'bg-green-50 border-green-200' : 'bg-white border-slate-200 hover:bg-slate-50'}
-            `}
-          >
-            <div className="flex items-center gap-2">
-              <HardDrive className={`w-4 h-4 ${autoSaveToDisk ? 'text-green-600' : 'text-slate-400'}`} />
-              <div className="text-xs font-bold text-slate-700">حفظ الملفات تلقائياً</div>
-            </div>
-            <div className={`w-8 h-4 rounded-full p-0.5 transition-colors ${autoSaveToDisk ? 'bg-green-500' : 'bg-slate-300'}`}>
-              <div className={`w-3 h-3 bg-white rounded-full shadow-sm transition-transform ${autoSaveToDisk ? 'translate-x-[-16px]' : ''}`}></div>
-            </div>
-          </div>
-
           {/* Data Management & Export Area */}
           <div className="grid grid-cols-2 gap-2 mb-2">
             <button 
@@ -431,26 +640,42 @@ const App: React.FC = () => {
                 إيقاف
               </button>
             ) : (
-              <button 
-                onClick={handleBatchGenerate}
-                className="w-full flex items-center justify-center gap-2 bg-indigo-50 text-indigo-700 py-2 rounded-lg text-sm font-bold border border-indigo-200 hover:bg-indigo-100 transition-colors shadow-sm"
-              >
-                <Play className="w-4 h-4 fill-current" />
-                توليد الكل
-              </button>
+              <div className="flex gap-2 w-full">
+                 <button 
+                    onClick={handleGeneratePending}
+                    className="w-full flex items-center justify-center gap-2 bg-indigo-50 text-indigo-700 py-2 rounded-lg text-sm font-bold border border-indigo-200 hover:bg-indigo-100 transition-colors shadow-sm"
+                  >
+                    <Play className="w-4 h-4 fill-current" />
+                    توليد المتبقي
+                  </button>
+                  <button 
+                    onClick={handleRegenerateAll}
+                    className="flex-shrink-0 flex items-center justify-center px-3 bg-white text-slate-500 py-2 rounded-lg text-sm font-bold border border-slate-200 hover:bg-slate-50 transition-colors"
+                    title="إعادة توليد الكل"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
+              </div>
             )}
           </div>
 
           <div className="flex items-center justify-between pt-2 border-t border-slate-200/60">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold border border-slate-200">
-                MA
-              </div>
-              <div>
-                <p className="text-sm font-medium text-slate-700">مدير النظام</p>
-                <p className="text-xs text-slate-500">جاهز للعمل الميداني</p>
-              </div>
+             {/* Auto-save Toggle */}
+            <div className="flex items-center gap-2">
+                <label htmlFor="auto-save-toggle" className="text-sm font-medium text-slate-600 cursor-pointer select-none">
+                    حفظ تلقائي
+                </label>
+                <button
+                    id="auto-save-toggle"
+                    onClick={() => setAutoSaveToDisk(!autoSaveToDisk)}
+                    className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary ${autoSaveToDisk ? 'bg-primary' : 'bg-slate-200'}`}
+                    role="switch"
+                    aria-checked={autoSaveToDisk}
+                >
+                    <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${autoSaveToDisk ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
             </div>
+            
             <button 
               onClick={handleResetAll} 
               className="text-slate-400 hover:text-red-500 transition-colors"
@@ -491,15 +716,14 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-3">
-             {isBatchProcessing && (
-                <span className="px-3 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-full border border-indigo-100 font-medium flex items-center gap-1 animate-pulse shadow-sm">
-                  <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce"></div>
-                  جاري التوليد التلقائي...
+             {processingMessage && (
+                <span className="px-3 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-full border border-indigo-100 font-medium flex items-center gap-2 shadow-sm">
+                  {processingMessage}
                 </span>
              )}
              <span className="px-3 py-1 bg-green-50 text-green-700 text-xs rounded-full border border-green-100 font-medium flex items-center gap-1 shadow-sm">
                <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
-               Gemini Pro 3.0
+               Gemini 3.0
              </span>
           </div>
         </header>
@@ -510,136 +734,120 @@ const App: React.FC = () => {
             <div className="max-w-4xl mx-auto space-y-6 pb-20">
               
               {/* Prompt Section (Editable) */}
-              <section className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm transition-shadow hover:shadow-md focus-within:shadow-md focus-within:border-primary/50">
-                <div className="flex items-start gap-4">
-                  <div className="p-3 bg-blue-50 text-primary rounded-xl flex-shrink-0">
-                    <Code2 className="w-6 h-6" />
-                  </div>
-                  <div className="flex-1 w-full">
-                    <div className="flex justify-between items-center mb-2">
-                       <h2 className="text-lg font-bold text-slate-900">المدخلات (المتطلبات)</h2>
-                       <span className="text-xs text-slate-400 bg-slate-50 px-2 py-1 rounded border">قابل للتعديل</span>
-                    </div>
-                    
-                    <textarea 
-                      className="w-full min-h-[120px] p-3 text-slate-700 leading-relaxed bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none resize-y font-sans mb-4"
-                      value={activeTask.prompt}
-                      onChange={(e) => handlePromptChange(e.target.value)}
-                      placeholder="صف المتطلبات التقنية بدقة..."
-                      disabled={activeTask.status === TaskStatus.PROCESSING || isBatchProcessing}
-                    />
-
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-slate-700 text-sm whitespace-nowrap">الهدف:</span>
-                      <input 
-                        type="text"
-                        className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-sm text-slate-600 focus:ring-1 focus:ring-primary outline-none"
-                        value={activeTask.goal}
-                        onChange={(e) => handleGoalChange(e.target.value)}
-                        disabled={activeTask.status === TaskStatus.PROCESSING || isBatchProcessing}
-                      />
-                    </div>
+              <section className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <Code2 className="w-5 h-5 text-indigo-500" />
+                    المتطلبات التقنية (Prompt)
+                  </h3>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={handleGenerate}
+                      disabled={activeTask.status === TaskStatus.PROCESSING}
+                      className={`
+                        flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold text-white transition-all
+                        ${activeTask.status === TaskStatus.PROCESSING 
+                          ? 'bg-slate-400 cursor-not-allowed' 
+                          : 'bg-indigo-600 hover:bg-indigo-700 shadow-md hover:shadow-lg shadow-indigo-500/20'
+                        }
+                      `}
+                    >
+                      {activeTask.status === TaskStatus.PROCESSING ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          جاري المعالجة...
+                        </>
+                      ) : (
+                        <>
+                          <Bot className="w-4 h-4" />
+                          توليد المواصفات
+                        </>
+                      )}
+                    </button>
                   </div>
                 </div>
+                <textarea
+                  value={activeTask.prompt}
+                  onChange={(e) => handlePromptChange(e.target.value)}
+                  className="w-full h-48 p-4 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-mono text-sm leading-relaxed text-slate-700 resize-none"
+                  placeholder="اكتب المتطلبات هنا..."
+                  dir="rtl"
+                />
               </section>
 
-              {/* Action Area */}
-              {activeTask.status !== TaskStatus.COMPLETED && activeTask.status !== TaskStatus.PROCESSING && (
-                 <div className="flex justify-center py-4">
-                   <button 
-                    onClick={handleGenerate}
-                    disabled={isBatchProcessing}
-                    className="flex items-center gap-2 bg-primary hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/20 transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
-                   >
-                     <Bot className="w-5 h-5" />
-                     {activeTask.status === TaskStatus.FAILED ? 'إعادة المحاولة' : 'توليد المخطط المعماري والكود'}
-                   </button>
-                 </div>
+              {/* Goal Section */}
+              <section className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 mb-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Crosshair className="w-5 h-5 text-rose-500" />
+                  <h3 className="text-lg font-bold text-slate-800">الهدف (Goal)</h3>
+                </div>
+                <input
+                  type="text"
+                  value={activeTask.goal}
+                  onChange={(e) => handleGoalChange(e.target.value)}
+                  className="w-full p-3 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all text-slate-700"
+                  placeholder="حدد الهدف..."
+                />
+              </section>
+
+              {/* Deep Thinking UI (Visual Feedback) */}
+              {activeTask.status === TaskStatus.PROCESSING && (
+                <div className="bg-white rounded-2xl p-12 border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center animate-in fade-in duration-500 relative overflow-hidden mb-6">
+                  {/* Deep Thinking Animation */}
+                  <div className="relative mb-6">
+                    <div className="w-20 h-20 rounded-full border-4 border-indigo-100 border-t-indigo-600 animate-spin"></div>
+                    <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+                      <Brain className="w-8 h-8 text-indigo-600 animate-pulse" />
+                    </div>
+                  </div>
+                  
+                  <h3 className="text-xl font-bold text-slate-800 mb-2">جاري التفكير العميق...</h3>
+                  <div className="space-y-1">
+                    <p className="text-slate-500 text-sm">يقوم النموذج بتحليل المتطلبات وبناء الهيكل المعماري.</p>
+                    <p className="text-slate-400 text-xs animate-pulse">يتم استدعاء سياق المشروع السابق لضمان الاتساق...</p>
+                  </div>
+                  
+                  {/* Subtle background glow */}
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-indigo-500/5 rounded-full blur-3xl -z-10"></div>
+                </div>
               )}
 
               {/* Result Section */}
-              {activeTask.status === TaskStatus.PROCESSING && (
-                <div className="bg-white rounded-2xl p-12 border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center animate-in fade-in duration-500">
-                  <div className="w-16 h-16 border-4 border-blue-100 border-t-primary rounded-full animate-spin mb-6"></div>
-                  <h3 className="text-xl font-bold text-slate-800 mb-2">جاري تحليل البنية...</h3>
-                  <p className="text-slate-500 max-w-md">يقوم الذكاء الاصطناعي الآن ببناء النماذج وتصميم الـ API بناءً على أفضل الممارسات.</p>
-                </div>
-              )}
-
-              {activeTask.status === TaskStatus.COMPLETED && activeTask.result && (
-                <section className="bg-white rounded-2xl overflow-hidden border border-slate-200 shadow-md ring-1 ring-slate-200/50 animate-in slide-in-from-bottom-4 duration-500">
-                   <div className="bg-gradient-to-r from-slate-50 to-white border-b border-slate-100 p-4 flex items-center justify-between sticky top-0 z-10 backdrop-blur-md bg-white/80">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-green-100 text-green-700 rounded-lg">
-                           <CheckCircle2 className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h2 className="font-bold text-slate-800">المواصفات التقنية المولدة</h2>
-                          <p className="text-xs text-slate-400 font-mono">Gemini 3.0 Pro Preview</p>
-                        </div>
-                      </div>
-                      
-                      <div className="flex gap-2">
-                        <button 
-                          onClick={handleGenerate}
-                          disabled={isBatchProcessing}
-                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 hover:text-primary transition-colors disabled:opacity-50"
-                        >
-                          <RefreshCw className="w-3.5 h-3.5" />
-                          إعادة التوليد
-                        </button>
-                        <button 
-                          onClick={handleDownloadCurrent}
-                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-slate-800 rounded-lg hover:bg-slate-700 shadow-sm transition-colors"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          تصدير .MD
-                        </button>
-                      </div>
-                   </div>
-                   <div className="p-8 bg-white min-h-[500px]">
-                      <SimpleMarkdown content={activeTask.result} />
-                   </div>
+              {activeTask.result && (
+                <section className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-emerald-500" />
+                      <h3 className="text-lg font-bold text-slate-800">المواصفات المولدة</h3>
+                    </div>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={handleDownloadCurrent}
+                        className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors"
+                        title="تحميل Markdown"
+                      >
+                        <Download className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+                  <SimpleMarkdown content={activeTask.result} />
                 </section>
               )}
 
-              {activeTask.status === TaskStatus.FAILED && (
-                 <div className="bg-red-50 text-red-700 p-4 rounded-xl flex items-center gap-3 border border-red-100">
-                    <AlertCircle className="w-6 h-6 flex-shrink-0" />
-                    <div className="flex-1">
-                      <p className="font-bold">فشل الاتصال</p>
-                      <p className="text-sm mb-1">حدث خطأ أثناء معالجة الطلب. التفاصيل التقنية:</p>
-                      <code className="block bg-red-100 p-2 rounded text-xs font-mono dir-ltr text-left">
-                        {activeTask.errorMessage || "Unknown Error"}
-                      </code>
-                    </div>
-                 </div>
+              {activeTask.status === TaskStatus.FAILED && activeTask.errorMessage && (
+                <div className="bg-red-50 text-red-600 p-4 rounded-xl border border-red-200 flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold">فشل التوليد</p>
+                    <p className="text-sm mt-1 opacity-90">{activeTask.errorMessage}</p>
+                  </div>
+                </div>
               )}
-
             </div>
           ) : (
-            <div className="h-full flex flex-col items-center justify-center text-center p-8">
-              <div className="bg-white p-6 rounded-full shadow-sm mb-6 border border-slate-100">
-                <Cpu className="w-12 h-12 text-slate-300" />
-              </div>
-              <h2 className="text-2xl font-bold text-slate-800 mb-2">مرحباً بك في Muhandis AI</h2>
-              <p className="text-slate-500 max-w-md mb-8">
-                أداة المطور المحترف لتوليد المواصفات التقنية والمخططات المعمارية.
-              </p>
-              <div className="flex gap-4 text-sm text-slate-400">
-                <div className="flex items-center gap-1"><Save className="w-4 h-4" /> حفظ تلقائي</div>
-                <div className="flex items-center gap-1"><Code2 className="w-4 h-4" /> نسخ الكود</div>
-                <div className="flex items-center gap-1"><Download className="w-4 h-4" /> تصدير الملفات</div>
-              </div>
-              
-              <button 
-                onClick={handleBatchGenerate}
-                disabled={isBatchProcessing}
-                className="mt-8 flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-indigo-500/20 transition-all hover:scale-105"
-              >
-                <Play className="w-5 h-5 fill-current" />
-                ابدأ توليد جميع المهام
-              </button>
+            <div className="flex flex-col items-center justify-center h-full text-slate-400">
+              <Bot className="w-16 h-16 mb-4 opacity-20" />
+              <p className="text-lg font-medium">اختر مهمة للبدء</p>
             </div>
           )}
         </div>
