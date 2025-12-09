@@ -1,16 +1,21 @@
+
+
+
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ProjectTask, TaskStatus } from './types';
+import JSZip from 'jszip';
+import { ProjectTask, TaskStatus, ChecklistItem } from './types';
 import { INITIAL_TASKS, EXECUTION_ORDER } from './constants';
-import { generateTechnicalSpec } from './services/geminiService';
+import { generateTechnicalSpec, generateChecklist } from './services/geminiService';
 import { TaskCard } from './components/TaskCard';
 import { SimpleMarkdown } from './components/SimpleMarkdown';
+import { GitHubSyncStatus } from './components/GitHubSyncStatus';
+import { Checklist } from './components/Checklist';
 import { 
   LayoutDashboard, 
   Plus, 
   Bot, 
   Cpu, 
   Code2,
-  CheckCircle2,
   AlertCircle,
   Download,
   Trash2,
@@ -20,25 +25,19 @@ import {
   FileText,
   Upload,
   FileJson,
-  HardDrive,
   Brain,
-  CloudCheck,
   Crosshair,
-  FileCode,
-  Terminal,
-  Monitor,
   Search,
-  Filter,
-  Check
+  Settings,
+  Power
 } from 'lucide-react';
 
-// Updated storage key to ensure new tasks (v8) are loaded for the user
-const STORAGE_KEY = 'muhandis_tasks_v8';
-const ACTIVE_TASK_KEY = 'muhandis_active_task_v8';
+const STORAGE_KEY = 'muhandis_tasks_v9';
+const ACTIVE_TASK_KEY = 'muhandis_active_task_v9';
 const AUTO_SAVE_KEY = 'muhandis_auto_save_pref';
+const BATCH_TASK_DELAY_MS = 4000; // Increased delay for proactive pacing to avoid quota errors
 
 const App: React.FC = () => {
-  // 1. Persistence Logic: Smart Merge Strategy
   const [tasks, setTasks] = useState<ProjectTask[]>(() => {
     try {
       const savedTasks = localStorage.getItem(STORAGE_KEY);
@@ -79,13 +78,16 @@ const App: React.FC = () => {
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+  const [isChecklistGenerating, setIsChecklistGenerating] = useState(false);
   const [processingMessage, setProcessingMessage] = useState<string | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const stopBatchRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // --- Search & Filter State ---
+  const settingsRef = useRef<HTMLDivElement>(null);
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'unsynced' | 'syncing' | 'error'>('synced');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'COMPLETED' | 'PENDING'>('ALL');
+  const [regenerationTrigger, setRegenerationTrigger] = useState<ProjectTask[] | null>(null);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
@@ -102,10 +104,41 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem(AUTO_SAVE_KEY, String(autoSaveToDisk));
   }, [autoSaveToDisk]);
+  
+  useEffect(() => {
+    if (syncStatus === 'syncing') {
+        const timer = setTimeout(() => {
+            // Only set to synced if it was previously syncing to avoid overwriting error/unsynced states
+            setSyncStatus(prev => (prev === 'syncing' ? 'synced' : prev));
+        }, 2500);
+        return () => clearTimeout(timer);
+    }
+  }, [syncStatus]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
+        setIsSettingsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [settingsRef]);
+
+  // Effect to handle the regeneration process robustly.
+  useEffect(() => {
+    if (regenerationTrigger) {
+      // This effect runs after the state has been updated and the component re-rendered.
+      // It ensures the batch process starts with the correct, stable state.
+      runBatchProcess(EXECUTION_ORDER, regenerationTrigger);
+      setRegenerationTrigger(null); // Reset trigger after use
+    }
+  }, [regenerationTrigger]);
 
   const activeTask = tasks.find(t => t.id === activeTaskId);
 
-  // --- Filtered Tasks Logic ---
   const filteredTasks = useMemo(() => {
     return tasks.filter(task => {
       const matchesSearch = task.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -119,371 +152,257 @@ const App: React.FC = () => {
     });
   }, [tasks, searchTerm, filterStatus]);
 
-
-  // --- Helper to Collect Context ---
-  // Modified to accept an optional list, defaulting to current state
   const getProjectContext = (taskList = tasks) => {
     const completedTasks = taskList.filter(t => t.status === TaskStatus.COMPLETED && t.result);
     if (completedTasks.length === 0) return "";
-    
     return completedTasks.map(t => 
       `### المهمة المنجزة: ${t.title} (${t.id})\n${t.result}\n`
     ).join("\n---\n");
   };
 
-  const handleTaskClick = (task: ProjectTask) => {
-    setActiveTaskId(task.id);
-  };
-
+  const handleTaskClick = (task: ProjectTask) => setActiveTaskId(task.id);
   const handlePromptChange = (newPrompt: string) => {
     if (!activeTaskId) return;
-    setTasks(prev => prev.map(t => 
-      t.id === activeTaskId ? { ...t, prompt: newPrompt } : t
-    ));
+    setTasks(prev => prev.map(t => t.id === activeTaskId ? { ...t, prompt: newPrompt } : t));
+    setSyncStatus('unsynced');
   };
-
   const handleGoalChange = (newGoal: string) => {
     if (!activeTaskId) return;
-    setTasks(prev => prev.map(t => 
-      t.id === activeTaskId ? { ...t, goal: newGoal } : t
-    ));
+    setTasks(prev => prev.map(t => t.id === activeTaskId ? { ...t, goal: newGoal } : t));
+    setSyncStatus('unsynced');
   };
-
-  const downloadTask = (task: ProjectTask) => {
-    if (!task.result) return;
-    const element = document.createElement("a");
-    const file = new Blob([task.result], {type: 'text/markdown'});
-    element.href = URL.createObjectURL(file);
-    element.download = `${task.title.replace(/\s+/g, '_')}_spec.md`;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
+  
+  const downloadFile = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
-
-  const handleDownloadCurrent = () => {
-    if (activeTask) downloadTask(activeTask);
-  };
-
-  const handleExportFullProject = () => {
-    const completedTasks = tasks.filter(t => t.status === TaskStatus.COMPLETED && t.result);
-
-    if (completedTasks.length === 0) {
-      alert("لا يوجد محتوى مكتمل لتصديره. يرجى توليد المهام أولاً.");
-      return;
-    }
-
-    let fullReport = `# وثيقة المواصفات التقنية الكاملة - Muhandis AI\n`;
-    fullReport += `تاريخ التصدير: ${new Date().toLocaleDateString('ar-EG')}\n\n`;
-    fullReport += `## جدول المحتويات\n`;
-    completedTasks.forEach((task, index) => {
-      fullReport += `${index + 1}. [${task.title}](#task-${task.id})\n`;
-    });
-    fullReport += `\n---\n\n`;
-    completedTasks.forEach((task, index) => {
-      fullReport += `<div id="task-${task.id}"></div>\n\n`;
-      fullReport += `# ${index + 1}. ${task.title}\n\n`;
-      fullReport += `**الهدف:** ${task.goal}\n\n`;
-      fullReport += `### المتطلبات:\n${task.prompt}\n\n`;
-      fullReport += `### المواصفات الفنية:\n\n${task.result}\n\n`;
-      fullReport += `---\n\n`;
-    });
-    const element = document.createElement("a");
-    const file = new Blob([fullReport], {type: 'text/markdown'});
-    element.href = URL.createObjectURL(file);
-    element.download = `MuhandisAI_Full_Project_Spec_${new Date().toISOString().slice(0,10)}.md`;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-  };
-
-  const handleExportBackup = () => {
-    const dataStr = JSON.stringify(tasks, null, 2);
-    const element = document.createElement("a");
-    const file = new Blob([dataStr], {type: 'application/json'});
-    element.href = URL.createObjectURL(file);
-    element.download = `MuhandisAI_Backup_${new Date().toISOString().slice(0,10)}.json`;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-  };
-
-  const handleExportToShellScript = (osType: 'unix' | 'windows') => {
+  
+  const handleExportProject = async () => {
     const completedTasks = tasks.filter(t => t.status === TaskStatus.COMPLETED && t.result);
     if (completedTasks.length === 0) {
-      alert("يرجى توليد المهام أولاً قبل إنشاء سكربت التثبيت.");
+      alert("لا توجد مهام مكتملة لتصديرها.");
       return;
     }
-    if (!window.confirm(`سيقوم النظام بإنشاء ملف تشغيلي (${osType === 'unix' ? '.sh' : '.bat'}) يقوم تلقائياً بإنشاء مجلدات المشروع وكتابة الأكواد التي تم توليدها داخل الملفات المناسبة.\n\nهل تريد المتابعة؟`)) {
-      return;
-    }
-    let scriptContent = "";
-    const rootDir = "Muhandis_Project";
-    if (osType === 'unix') {
-      scriptContent += `#!/bin/bash\n\n`;
-      scriptContent += `echo "🚀 Starting Muhandis AI Project Builder..."\n`;
-      scriptContent += `mkdir -p "${rootDir}"\n`;
-      scriptContent += `cd "${rootDir}"\n\n`;
-      completedTasks.forEach(task => {
-        if (!task.result) return;
-        const safeTitle = task.title.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '');
-        scriptContent += `echo "Processing: ${task.title}..."\n`;
-        scriptContent += `mkdir -p "docs"\n`;
-        const safeDocContent = task.result.replace(/`/g, '\\`').replace(/\$/g, '\\$');
-        scriptContent += `cat << 'EOF' > "docs/${task.id}_${safeTitle}.md"\n${task.result}\nEOF\n\n`;
-        const lines = task.result.split('\n');
-        let inCodeBlock = false;
-        let currentFile = "";
-        let codeBuffer = [];
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          if (line.trim().startsWith('```')) {
-            if (inCodeBlock) {
-               if (currentFile) {
-                 const dirName = currentFile.substring(0, currentFile.lastIndexOf('/'));
-                 if (dirName) {
-                   scriptContent += `mkdir -p "${dirName}"\n`;
-                 }
-                 const code = codeBuffer.join('\n').replace(/`/g, '\\`').replace(/\$/g, '\\$');
-                 scriptContent += `cat << 'EOF' > "${currentFile}"\n${code}\nEOF\n`;
-                 scriptContent += `echo "  - Created: ${currentFile}"\n`;
-               }
-               inCodeBlock = false;
-               currentFile = "";
-               codeBuffer = [];
-            } else {
-               inCodeBlock = true;
-            }
-            continue;
-          }
-          if (inCodeBlock) {
-            const filenameMatch = line.match(/^(?:\/\/|#|<!--)\s*filename:\s*([^\n\r]+)/i);
-            if (filenameMatch) {
-              currentFile = filenameMatch[1].trim();
-            } else {
-              codeBuffer.push(line);
-            }
-          }
+
+    const zip = new JSZip();
+    const fileRegex = /\/\/ filename: (.+?)\n\`\`\`(?:[a-z]+)?\n([\s\S]+?)\n\`\`\`/g;
+
+    for (const task of completedTasks) {
+      const matches = [...task.result!.matchAll(fileRegex)];
+      for (const match of matches) {
+        const filename = match[1].trim();
+        const code = match[2].trim();
+        if (filename && code) {
+          zip.file(filename, code);
         }
-      });
-      scriptContent += `\necho "✅ Project build complete in folder: ${rootDir}"\n`;
-      scriptContent += `echo "📂 You can now run 'git init' to start version control."\n`;
-    } else {
-      scriptContent += `@echo off\n`;
-      scriptContent += `echo 🚀 Starting Muhandis AI Project Builder...\n`;
-      scriptContent += `mkdir "${rootDir}" 2>nul\n`;
-      scriptContent += `cd "${rootDir}"\n\n`;
-      completedTasks.forEach(task => {
-         const safeTitle = task.title.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '');
-         scriptContent += `echo Processing: ${safeTitle}...\n`;
-         scriptContent += `mkdir "docs" 2>nul\n`;
-         scriptContent += `echo (Documentation saved in app) > "docs\\${task.id}_Spec.txt"\n`;
-          const lines = task.result?.split('\n') || [];
-          let inCodeBlock = false;
-          let currentFile = "";
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            if (line.trim().startsWith('```')) {
-              if (inCodeBlock) {
-                 if (currentFile) {
-                   const winFile = currentFile.replace(/\//g, '\\');
-                   const lastSlash = winFile.lastIndexOf('\\');
-                   if (lastSlash !== -1) {
-                     const dir = winFile.substring(0, lastSlash);
-                     scriptContent += `mkdir "${dir}" 2>nul\n`;
-                   }
-                   scriptContent += `echo. > "${winFile}"\n`; 
-                   scriptContent += `echo [NOTE: Content needs to be copied from app due to Windows Batch limitations] >> "${winFile}"\n`;
-                 }
-                 inCodeBlock = false;
-                 currentFile = "";
-              } else {
-                 inCodeBlock = true;
-              }
-              continue;
-            }
-            if (inCodeBlock) {
-               const filenameMatch = line.match(/^(?:\/\/|#|<!--)\s*filename:\s*([^\n\r]+)/i);
-               if (filenameMatch) {
-                 currentFile = filenameMatch[1].trim();
-               }
-            }
-          }
-      });
-      scriptContent += `\necho ✅ Structure created. For full content population, use the Bash script in Git Bash or WSL.\n`;
-      scriptContent += `pause\n`;
+      }
     }
-    const element = document.createElement("a");
-    const file = new Blob([scriptContent], {type: osType === 'unix' ? 'application/x-sh' : 'application/bat'});
-    element.href = URL.createObjectURL(file);
-    element.download = osType === 'unix' ? 'install_project.sh' : 'install_structure.bat';
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
+    
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    downloadFile(zipBlob, 'muhandis_project.zip');
+  };
+  
+  const handleExportState = () => {
+    try {
+      const projectState = JSON.stringify(tasks, null, 2);
+      const blob = new Blob([projectState], { type: 'application/json' });
+      downloadFile(blob, `muhandis_project_state_${Date.now()}.json`);
+      setSyncStatus('synced');
+    } catch (error) {
+      console.error("Failed to export project state:", error);
+      alert("فشل تصدير حالة المشروع.");
+    }
   };
 
-  const handleImportBackup = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleTriggerImport = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const content = e.target?.result as string;
-        const parsed = JSON.parse(content);
-        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].id && parsed[0].title) {
-            if (window.confirm("تحذير: سيتم استبدال جميع المهام الحالية بالبيانات الموجودة في الملف. هل أنت متأكد؟")) {
-                setTasks(parsed);
-                setActiveTaskId(parsed[0].id);
-                alert("تم استعادة النسخة الاحتياطية بنجاح.");
-            }
-        } else {
-            alert("الملف المختار غير صالح أو تالف.");
+        const text = e.target?.result;
+        if (typeof text !== 'string') throw new Error("File content is not readable text.");
+        
+        const importedTasks = JSON.parse(text);
+
+        if (!Array.isArray(importedTasks) || (importedTasks.length > 0 && (!importedTasks[0].id || !importedTasks[0].title))) {
+          throw new Error("ملف JSON غير صالح أو لا يطابق بنية المشروع.");
+        }
+
+        if (window.confirm("هل أنت متأكد؟ سيتم استبدال المشروع الحالي بالكامل بالمشروع الذي تم استيراده.")) {
+          setTasks(importedTasks);
+          setActiveTaskId(null);
+          setSyncStatus('unsynced');
+          alert("تم استيراد المشروع بنجاح!");
         }
       } catch (error) {
-        console.error(error);
-        alert("حدث خطأ أثناء قراءة الملف.");
+        console.error("Failed to import project state:", error);
+        alert(`فشل استيراد المشروع: ${error instanceof Error ? error.message : "خطأ غير معروف"}`);
+      } finally {
+          if(event.target) {
+              event.target.value = '';
+          }
       }
     };
     reader.readAsText(file);
-    event.target.value = '';
   };
+  
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   const handleGenerate = async () => {
     if (!activeTask) return;
-    
-    // COLLECT CONTEXT
-    const context = getProjectContext();
-
-    setTasks(prev => prev.map(t => 
-      t.id === activeTask.id ? { ...t, status: TaskStatus.PROCESSING, errorMessage: undefined } : t
-    ));
-
+    setSyncStatus('syncing');
+    setTasks(p => p.map(t => t.id === activeTask.id ? { ...t, status: TaskStatus.PROCESSING, errorMessage: undefined } : t));
     try {
-      // Pass context to service
-      const result = await generateTechnicalSpec(activeTask.prompt, context);
+      const checklistContext = activeTask.checklist ? activeTask.checklist.map(c => `- ${c.text}`).join('\n') : "";
+      const result = await generateTechnicalSpec(activeTask.prompt, getProjectContext(tasks), checklistContext);
       
-      const updatedTask = { ...activeTask, status: TaskStatus.COMPLETED, result: result };
-      setTasks(prev => prev.map(t => t.id === activeTask.id ? updatedTask : t));
-      if (autoSaveToDisk) downloadTask(updatedTask);
+      setTasks(p => p.map(t => t.id === activeTask.id ? { ...t, status: TaskStatus.COMPLETED, result } : t));
+      if (autoSaveToDisk) handleExportState();
+
     } catch (error) {
-       console.error("Task generation failed:", error);
        const errorMsg = error instanceof Error ? error.message : "حدث خطأ غير معروف";
-       setTasks(prev => prev.map(t => 
-        t.id === activeTask.id ? { ...t, status: TaskStatus.FAILED, errorMessage: errorMsg } : t
-      ));
+       setTasks(p => p.map(t => t.id === activeTask.id ? { ...t, status: TaskStatus.FAILED, errorMessage: errorMsg } : t));
+       setSyncStatus('error');
+    }
+  };
+  
+  const handleGenerateChecklist = async () => {
+    if (!activeTask) return;
+    setIsChecklistGenerating(true);
+    try {
+      const items = await generateChecklist(activeTask.prompt, activeTask.goal);
+      const newChecklist: ChecklistItem[] = items.map(text => ({
+        id: `c-${activeTask.id}-${Date.now()}-${Math.random()}`,
+        text,
+        completed: false,
+      }));
+      setTasks(prev => prev.map(t => t.id === activeTask.id ? { ...t, checklist: newChecklist } : t));
+      setSyncStatus('unsynced');
+    } catch (error) {
+       alert(error instanceof Error ? error.message : "فشل توليد قائمة المراجعة");
+    } finally {
+      setIsChecklistGenerating(false);
     }
   };
 
-  const runBatchProcess = async (taskIds: string[]) => {
+  const runBatchProcess = async (taskIds: string[], initialTasksState: ProjectTask[]) => {
     setIsBatchProcessing(true);
-    setProcessingMessage("🚀 بدء التوليد الاستراتيجي...");
     stopBatchRef.current = false;
+    setSyncStatus('syncing');
 
-    let currentTasksState = [...tasks];
+    let currentTasksState = initialTasksState;
 
-    try {
-      for (const id of taskIds) {
-        if (stopBatchRef.current) {
-          setProcessingMessage("🛑 تم إيقاف العملية.");
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          break;
-        }
-        
-        const task = currentTasksState.find(t => t.id === id);
-        if (!task) continue;
-
-        setActiveTaskId(id);
-        
-        setTasks(prev => prev.map(t => t.id === id ? { ...t, status: TaskStatus.PROCESSING, errorMessage: undefined } : t));
-        setProcessingMessage(`⏳ جاري توليد: ${task.title.substring(0, 30)}...`);
-        
-        const currentContext = getProjectContext(currentTasksState);
-
-        // Smart Throttling: Add a delay *before* the API call to respect rate limits.
-        await new Promise(resolve => setTimeout(resolve, 4000)); 
-
-        if (stopBatchRef.current) { // Check again after the delay
-          setProcessingMessage("🛑 تم إيقاف العملية.");
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          break;
-        }
-
-        try {
-           const result = await generateTechnicalSpec(task.prompt, currentContext);
-           const updatedTask = { ...task, status: TaskStatus.COMPLETED, result };
-           
-           currentTasksState = currentTasksState.map(t => t.id === id ? updatedTask : t);
-           setTasks(prev => prev.map(t => t.id === id ? updatedTask : t));
-           
-           if (autoSaveToDisk) downloadTask(updatedTask);
-        } catch (error) {
-           console.error(`Error generating task ${id}:`, error);
-           const errorMsg = error instanceof Error ? error.message : "خطأ غير معروف";
-           
-           const failedTask = { ...task, status: TaskStatus.FAILED, errorMessage: errorMsg };
-           currentTasksState = currentTasksState.map(t => t.id === id ? failedTask : t);
-           
-           setTasks(prev => prev.map(t => t.id === id ? failedTask : t));
-
-           // Smart Error Handling: Pause for quota errors, break for fatal errors.
-           if (errorMsg.includes('Rate Limit Exceeded') || errorMsg.includes('تجاوز حد الاستخدام')) {
-                setProcessingMessage("⚠️ تم تجاوز الحصة. سيتم الانتظار لمدة دقيقة والمتابعة تلقائياً.");
-                await new Promise(resolve => setTimeout(resolve, 60000));
-           } else if (errorMsg.includes('Invalid API Key') || errorMsg.includes('مفتاح API غير صالح')) {
-                setProcessingMessage("🛑 خطأ فادح: مفتاح API غير صالح. توقفت العملية.");
-                await new Promise(resolve => setTimeout(resolve, 4000)); // Wait to show message
-                break; // Stop the whole batch process
-           }
-        }
+    for (let i = 0; i < taskIds.length; i++) {
+      if (stopBatchRef.current) {
+        setProcessingMessage("تم إيقاف التنفيذ.");
+        break;
       }
-    } catch (globalError) {
-      console.error("Critical batch error:", globalError);
-    } finally {
-      setIsBatchProcessing(false);
-      if (!stopBatchRef.current) {
-        setProcessingMessage("✅ اكتملت جميع المهام!");
+      
+      const taskId = taskIds[i];
+      const task = currentTasksState.find(t => t.id === taskId);
+      if (!task) continue;
+
+      setProcessingMessage(`(${i + 1}/${taskIds.length}) جاري معالجة: ${task.title}`);
+      
+      currentTasksState = currentTasksState.map(t => t.id === taskId ? { ...t, status: TaskStatus.PROCESSING, errorMessage: undefined } : t);
+      setTasks(currentTasksState);
+
+      try {
+        const projectContext = getProjectContext(currentTasksState);
+        const checklistContext = task.checklist ? task.checklist.map(c => `- ${c.text}`).join('\n') : "";
+        const result = await generateTechnicalSpec(task.prompt, projectContext, checklistContext);
+        
+        currentTasksState = currentTasksState.map(t => t.id === taskId ? { ...t, status: TaskStatus.COMPLETED, result } : t);
+        setTasks(currentTasksState);
+
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : "حدث خطأ غير معروف";
+
+        // Intelligent Auto-Recovery for Quota Errors
+        if (errorMsg.includes('تجاوزت الحصة')) {
+          setProcessingMessage("تم الوصول إلى الحد الأقصى للطلبات. سيتم إيقاف التنفيذ مؤقتاً لمدة دقيقة واحدة ثم المتابعة تلقائياً.");
+          await delay(60000); // Pause for 1 minute
+          i--; // Decrement index to retry the same task
+          continue; // Skip the rest of the loop (including the delay at the end)
+        }
+
+        // Handle other errors normally
+        currentTasksState = currentTasksState.map(t => t.id === taskId ? { ...t, status: TaskStatus.FAILED, errorMessage: errorMsg } : t);
+        setTasks(currentTasksState);
+        setSyncStatus('error');
       }
-      await new Promise(resolve => setTimeout(() => setProcessingMessage(null), 3000));
-      stopBatchRef.current = false;
+
+      if (i < taskIds.length - 1 && !stopBatchRef.current) {
+        await delay(BATCH_TASK_DELAY_MS);
+      }
     }
+
+    setIsBatchProcessing(false);
+    if (!stopBatchRef.current) {
+        setProcessingMessage("اكتمل التنفيذ المتسلسل بنجاح!");
+        if (autoSaveToDisk) handleExportState();
+        setSyncStatus('synced');
+    }
+    setTimeout(() => setProcessingMessage(null), 4000);
   };
 
   const handleGeneratePending = () => {
-    const pendingTasks = tasks.filter(t => t.status === TaskStatus.PENDING || t.status === TaskStatus.FAILED);
-    if (pendingTasks.length === 0) {
-        alert("لا توجد مهام متبقية. يمكنك استخدام زر 'إعادة التوليد' لتوليد كل شيء من جديد.");
-        return;
-    }
-    const pendingIds = pendingTasks.map(t => t.id);
-    // Sort the pending tasks based on the master execution plan
-    const sortedIds = pendingIds.sort((a, b) => {
-        const indexA = EXECUTION_ORDER.indexOf(a);
-        const indexB = EXECUTION_ORDER.indexOf(b);
-        // If a task is not in the master plan (e.g., user-created), it goes to the end
-        if (indexA === -1) return 1;
-        if (indexB === -1) return -1;
-        return indexA - indexB;
+    const pendingIds = EXECUTION_ORDER.filter(id => {
+        const task = tasks.find(t => t.id === id);
+        return task && task.status !== TaskStatus.COMPLETED;
     });
-    runBatchProcess(sortedIds);
+    if(pendingIds.length > 0) {
+        runBatchProcess(pendingIds, tasks);
+    } else {
+        alert("جميع المهام مكتملة بالفعل.");
+    }
   };
 
   const handleRegenerateAll = () => {
-      if (window.confirm("تحذير: سيتم إعادة توليد جميع المهام بالترتيب الاستراتيجي، مما قد يستهلك جزءاً كبيراً من الحصة المتاحة. هل أنت متأكد؟")) {
-          const allTaskIds = tasks.map(t => t.id);
-          // Sort all tasks based on the master execution plan
-          const sortedIds = allTaskIds.sort((a, b) => {
-              const indexA = EXECUTION_ORDER.indexOf(a);
-              const indexB = EXECUTION_ORDER.indexOf(b);
-              if (indexA === -1) return 1;
-              if (indexB === -1) return -1;
-              return indexA - indexB;
-          });
-          runBatchProcess(sortedIds);
-      }
+    if (window.confirm("هل أنت متأكد؟ سيتم مسح جميع المخرجات الحالية وإعادة توليد المشروع بالكامل.")) {
+      // 1. Create the new state with all tasks reset.
+      const resetTasks = tasks.map(t => ({
+        ...t,
+        status: TaskStatus.PENDING,
+        result: undefined,
+        errorMessage: undefined,
+      }));
+
+      // 2. Apply the state update to immediately reflect the reset in the UI.
+      setTasks(resetTasks);
+      
+      // 3. Instead of setTimeout, trigger a useEffect to run the batch process.
+      // This is a more robust pattern in React for handling side effects after state updates.
+      setRegenerationTrigger(resetTasks);
+    }
+  };
+  
+  const handleClearAllOutputs = () => {
+    if (window.confirm("هل أنت متأكد؟ سيتم مسح جميع النتائج وحالات المهام.")) {
+      setTasks(prev => prev.map(t => ({
+        ...t,
+        status: TaskStatus.PENDING,
+        result: undefined,
+        errorMessage: undefined,
+      })));
+      setSyncStatus('unsynced');
+    }
   };
 
-
-  const handleStopBatch = () => {
-    stopBatchRef.current = true;
+  const handleStopBatch = () => { 
+    stopBatchRef.current = true; 
   };
 
   const createNewTask = () => {
@@ -493,10 +412,12 @@ const App: React.FC = () => {
       prompt: 'اكتب تفاصيل المتطلبات التقنية هنا...',
       goal: 'تحديد الهدف...',
       status: TaskStatus.PENDING,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      checklist: []
     };
     setTasks([...tasks, newTask]);
     setActiveTaskId(newTask.id);
+    setSyncStatus('unsynced');
   };
 
   const handleDeleteTask = (e: React.MouseEvent, taskId: string) => {
@@ -504,23 +425,68 @@ const App: React.FC = () => {
     if(window.confirm('هل أنت متأكد من حذف هذه المهمة؟')) {
       const newTasks = tasks.filter(t => t.id !== taskId);
       setTasks(newTasks);
-      if (activeTaskId === taskId) {
-        setActiveTaskId(null);
-      }
+      if (activeTaskId === taskId) setActiveTaskId(null);
+      setSyncStatus('unsynced');
     }
-  }
+  };
 
   const handleResetAll = () => {
     if(window.confirm('هل أنت متأكد؟ سيتم حذف جميع التغييرات والعودة للحالة الأولية.')) {
       setTasks(INITIAL_TASKS);
       setActiveTaskId(null);
+      localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(ACTIVE_TASK_KEY);
+      setSyncStatus('synced');
+      setIsSettingsOpen(false);
     }
-  }
+  };
+  
+  // Checklist handlers
+  const handleToggleChecklistItem = (itemId: string) => {
+    if (!activeTaskId) return;
+    setTasks(prev => prev.map(t => t.id === activeTaskId ? {
+      ...t,
+      checklist: t.checklist?.map(c => c.id === itemId ? { ...c, completed: !c.completed } : c)
+    } : t));
+    setSyncStatus('unsynced');
+  };
+
+  const handleAddChecklistItem = (text: string) => {
+    if (!activeTaskId || !text.trim()) return;
+    const newItem: ChecklistItem = {
+      id: `c-${activeTaskId}-${Date.now()}`,
+      text: text.trim(),
+      completed: false
+    };
+    setTasks(prev => prev.map(t => t.id === activeTaskId ? {
+      ...t,
+      checklist: [...(t.checklist || []), newItem]
+    } : t));
+    setSyncStatus('unsynced');
+  };
+
+  const handleDeleteChecklistItem = (itemId: string) => {
+     if (!activeTaskId) return;
+     setTasks(prev => prev.map(t => t.id === activeTaskId ? {
+      ...t,
+      checklist: t.checklist?.filter(c => c.id !== itemId)
+    } : t));
+    setSyncStatus('unsynced');
+  };
+  
+  const handleDownloadCurrent = () => {
+    if (activeTask && activeTask.result) {
+      const blob = new Blob([activeTask.result], { type: 'text/markdown;charset=utf-8' });
+      const filename = `${activeTask.title.replace(/[\/\\?%*:|"<>]/g, '_')}.md`;
+      downloadFile(blob, filename);
+    }
+  };
+
+  const hasCompletedTasks = useMemo(() => tasks.some(t => t.status === TaskStatus.COMPLETED), [tasks]);
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden" dir="rtl">
-      <input type="file" ref={fileInputRef} onChange={handleImportBackup} accept=".json" className="hidden" />
+      <input type="file" ref={fileInputRef} accept=".json" className="hidden" onChange={handleFileImport} />
 
       {/* Sidebar */}
       <aside className={`${isSidebarOpen ? 'w-80' : 'w-0'} bg-white border-l border-slate-200 flex-shrink-0 transition-all duration-300 flex flex-col`}>
@@ -531,288 +497,214 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Sidebar Search & Filter Area */}
-        <div className="px-4 pt-4 pb-2 space-y-3">
+        {/* Search & Filter */}
+        <div className="px-4 pt-4 pb-2 space-y-3 border-b border-slate-100">
           <div className="relative">
             <Search className="w-4 h-4 absolute top-2.5 right-3 text-slate-400" />
-            <input 
-              type="text" 
-              placeholder="بحث في المهام..." 
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
-            />
+            <input type="text" placeholder="بحث في المهام..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
           </div>
-          <div className="flex gap-1">
-             <button 
-               onClick={() => setFilterStatus('ALL')}
-               className={`flex-1 py-1.5 text-xs font-bold rounded-md border transition-all ${filterStatus === 'ALL' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
-             >
-               الكل
-             </button>
-             <button 
-               onClick={() => setFilterStatus('PENDING')}
-               className={`flex-1 py-1.5 text-xs font-bold rounded-md border transition-all ${filterStatus === 'PENDING' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
-             >
-               متبقي
-             </button>
-             <button 
-               onClick={() => setFilterStatus('COMPLETED')}
-               className={`flex-1 py-1.5 text-xs font-bold rounded-md border transition-all ${filterStatus === 'COMPLETED' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
-             >
-               مكتمل
-             </button>
-          </div>
-        </div>
-
-        <div className="p-4 flex-1 overflow-y-auto">
-          <div className="flex items-center justify-between mb-3 px-2">
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-               المهام ({filteredTasks.length})
-            </h2>
-            <button onClick={createNewTask} className="p-1 hover:bg-slate-100 rounded text-slate-500 transition-colors" title="إضافة مهمة">
-              <Plus className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="space-y-2">
-            {filteredTasks.length > 0 ? filteredTasks.map(task => (
-              <div key={task.id} className="relative group">
-                <TaskCard 
-                  task={task} 
-                  isActive={task.id === activeTaskId} 
-                  onClick={handleTaskClick}
-                />
-                <button 
-                  onClick={(e) => handleDeleteTask(e, task.id)}
-                  className="absolute top-2 left-2 p-1.5 bg-white/90 rounded-full shadow-sm text-red-500 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
-                  title="حذف المهمة"
+          <div className="grid grid-cols-3 gap-2">
+            {(['ALL', 'PENDING', 'COMPLETED'] as const).map(status => (
+                <button
+                    key={status}
+                    onClick={() => setFilterStatus(status)}
+                    className={`px-2 py-1 text-xs font-bold rounded-md transition-colors ${
+                        filterStatus === status
+                            ? 'bg-primary text-white shadow'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                    {status === 'ALL' ? 'الكل' : status === 'PENDING' ? 'قيد الانتظار' : 'مكتمل'}
                 </button>
-              </div>
-            )) : (
-              <div className="text-center py-8 text-slate-400 text-sm">
-                لا توجد نتائج مطابقة
-              </div>
-            )}
+            ))}
           </div>
         </div>
         
-        <div className="p-4 border-t border-slate-100 bg-slate-50 space-y-3">
-          
-          {/* Data Management & Export Area */}
-          <div className="grid grid-cols-2 gap-2 mb-2">
-            <button 
-              onClick={handleExportBackup}
-              className="flex items-center justify-center gap-1.5 bg-white text-slate-600 py-2 rounded-lg text-xs font-bold border border-slate-200 hover:bg-slate-50 transition-colors"
-              title="تصدير ملف المشروع (Backup)"
-            >
-              <FileJson className="w-4 h-4" />
-              حفظ نسخة
-            </button>
-            <button 
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center justify-center gap-1.5 bg-white text-slate-600 py-2 rounded-lg text-xs font-bold border border-slate-200 hover:bg-slate-50 transition-colors"
-              title="استعادة ملف مشروع"
-            >
-              <Upload className="w-4 h-4" />
-              استعادة
-            </button>
+        <div className="p-4 flex-1 overflow-y-auto">
+          <div className="flex items-center justify-between mb-3 px-2">
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">المهام ({filteredTasks.length})</h2>
+            <button onClick={createNewTask} className="p-1 hover:bg-slate-100 rounded text-slate-500" title="إضافة مهمة"><Plus className="w-4 h-4" /></button>
           </div>
-
-          <button 
-            onClick={handleExportFullProject}
-            className="w-full flex items-center justify-center gap-2 bg-slate-800 text-white py-2 rounded-lg text-sm font-bold hover:bg-slate-700 transition-colors shadow-sm"
-          >
-            <FileText className="w-4 h-4" />
-             تصدير التقرير الكامل
-          </button>
-
-          {/* Batch Processing Control */}
-          <div className="flex gap-2">
-            {isBatchProcessing ? (
-              <button 
-                onClick={handleStopBatch}
-                className="w-full flex items-center justify-center gap-2 bg-red-50 text-red-600 py-2 rounded-lg text-sm font-bold border border-red-200 hover:bg-red-100 transition-colors shadow-sm"
-              >
-                <Square className="w-4 h-4 fill-current" />
-                إيقاف
-              </button>
-            ) : (
-              <div className="flex gap-2 w-full">
-                 <button 
-                    onClick={handleGeneratePending}
-                    className="w-full flex items-center justify-center gap-2 bg-indigo-50 text-indigo-700 py-2 rounded-lg text-sm font-bold border border-indigo-200 hover:bg-indigo-100 transition-colors shadow-sm"
-                  >
-                    <Play className="w-4 h-4 fill-current" />
-                    توليد المتبقي
-                  </button>
-                  <button 
-                    onClick={handleRegenerateAll}
-                    className="flex-shrink-0 flex items-center justify-center px-3 bg-white text-slate-500 py-2 rounded-lg text-sm font-bold border border-slate-200 hover:bg-slate-50 transition-colors"
-                    title="إعادة توليد الكل"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center justify-between pt-2 border-t border-slate-200/60">
-             {/* Auto-save Toggle */}
-            <div className="flex items-center gap-2">
-                <label htmlFor="auto-save-toggle" className="text-sm font-medium text-slate-600 cursor-pointer select-none">
-                    حفظ تلقائي
-                </label>
-                <button
-                    id="auto-save-toggle"
-                    onClick={() => setAutoSaveToDisk(!autoSaveToDisk)}
-                    className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary ${autoSaveToDisk ? 'bg-primary' : 'bg-slate-200'}`}
-                    role="switch"
-                    aria-checked={autoSaveToDisk}
-                >
-                    <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${autoSaveToDisk ? 'translate-x-6' : 'translate-x-1'}`} />
+          <div className="space-y-2">
+            {filteredTasks.length > 0 ? filteredTasks.map(task => (
+              <div key={task.id} className="relative group">
+                <TaskCard task={task} isActive={task.id === activeTaskId} onClick={handleTaskClick} />
+                <button onClick={(e) => handleDeleteTask(e, task.id)} className="absolute top-2 left-2 p-1.5 bg-white/90 rounded-full shadow-sm text-red-500 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50" title="حذف المهمة">
+                  <Trash2 className="w-3.5 h-3.5" />
                 </button>
-            </div>
-            
-            <button 
-              onClick={handleResetAll} 
-              className="text-slate-400 hover:text-red-500 transition-colors"
-              title="إعادة ضبط المصنع"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
+              </div>
+            )) : <div className="text-center py-8 text-slate-400 text-sm">لا توجد نتائج مطابقة</div>}
           </div>
+        </div>
+        
+        <div className="p-4 border-t border-slate-100 bg-slate-50/80 space-y-3">
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider px-1">التحكم في التنفيذ</h3>
+             {isBatchProcessing ? (
+                <div className="space-y-2 text-center">
+                    <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-sm text-blue-700 font-medium animate-pulse">
+                        {processingMessage || 'جاري التهيئة...'}
+                    </div>
+                    <button 
+                        onClick={handleStopBatch}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-red-500 text-white hover:bg-red-600 transition-all shadow"
+                    >
+                        <Square className="w-4 h-4" />
+                        إيقاف التنفيذ
+                    </button>
+                </div>
+            ) : (
+                <div className="space-y-2">
+                     <button 
+                        onClick={handleGeneratePending}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-primary text-white hover:bg-blue-700 transition-all shadow-md shadow-blue-500/20"
+                    >
+                        <Play className="w-4 h-4" />
+                        بدء التنفيذ المتسلسل
+                    </button>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button 
+                            onClick={handleRegenerateAll}
+                            className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium bg-white text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors"
+                        >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            إعادة توليد الكل
+                        </button>
+                         <button 
+                            onClick={handleClearAllOutputs}
+                            className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium bg-white text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors"
+                        >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            مسح المخرجات
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
       </aside>
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col h-full overflow-hidden relative bg-slate-50/50">
-        
-        {/* Header */}
         <header className="h-16 bg-white/80 backdrop-blur-sm border-b border-slate-200 flex items-center justify-between px-6 z-10">
           <div className="flex items-center gap-4">
-            <button 
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="p-2 hover:bg-slate-100 rounded-lg text-slate-600"
-            >
-              <LayoutDashboard className="w-5 h-5" />
-            </button>
+            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600"><LayoutDashboard className="w-5 h-5" /></button>
             {activeTask && (
                <div className="flex items-center gap-2 text-sm text-slate-500">
-                  <span>المشاريع</span>
-                  <span>/</span>
-                  <input 
-                    type="text" 
-                    value={activeTask.title}
+                  <span>المشاريع</span><span>/</span>
+                  <input type="text" value={activeTask.title}
                     onChange={(e) => {
-                      setTasks(prev => prev.map(t => t.id === activeTaskId ? {...t, title: e.target.value} : t))
+                      setTasks(p => p.map(t => t.id === activeTaskId ? {...t, title: e.target.value} : t));
+                      setSyncStatus('unsynced');
                     }}
-                    className="text-slate-900 font-medium bg-transparent border-none focus:ring-0 p-0 w-64 hover:bg-slate-50 rounded"
-                  />
+                    className="text-slate-900 font-medium bg-transparent border-none focus:ring-0 p-0 w-64 hover:bg-slate-50 rounded" />
                </div>
             )}
           </div>
-          
           <div className="flex items-center gap-3">
-             {processingMessage && (
-                <span className="px-3 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-full border border-indigo-100 font-medium flex items-center gap-2 shadow-sm">
-                  {processingMessage}
-                </span>
-             )}
-             <span className="px-3 py-1 bg-green-50 text-green-700 text-xs rounded-full border border-green-100 font-medium flex items-center gap-1 shadow-sm">
-               <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
-               Gemini 3.0
-             </span>
+             <GitHubSyncStatus status={syncStatus} />
+             
+             <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+                <button
+                    onClick={handleTriggerImport}
+                    className="p-2 hover:bg-white rounded-md text-slate-600 hover:text-primary transition-colors"
+                    title="استعادة مشروع من ملف نسخة احتياطية (.json)"
+                >
+                    <Upload className="w-4 h-4" />
+                </button>
+                <button
+                    onClick={handleExportState}
+                    className="p-2 hover:bg-white rounded-md text-slate-600 hover:text-primary transition-colors"
+                    title="حفظ نسخة احتياطية من جميع مهامك وتقدمك في ملف .json. استخدم هذا الملف لاستعادة عملك لاحقاً."
+                >
+                    <FileJson className="w-4 h-4" />
+                </button>
+             </div>
+             
+             <div className="w-px h-6 bg-slate-200"></div>
+
+             <button
+                onClick={handleExportProject}
+                disabled={!hasCompletedTasks}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-slate-800 text-white hover:bg-slate-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+                title="تنزيل الكود المصدري (.zip) - لا يمكن استيراد هذا الملف"
+              >
+                <Download className="w-4 h-4" />
+                <span>تنزيل ملفات الكود</span>
+              </button>
+              
+              <div className="relative">
+                <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600" title="الإعدادات">
+                  <Settings className="w-5 h-5" />
+                </button>
+                {isSettingsOpen && (
+                  <div ref={settingsRef} className="absolute left-0 mt-2 w-72 bg-white border border-slate-200 rounded-xl shadow-2xl z-20 animate-in fade-in slide-in-from-top-2 duration-200">
+                    <div className="p-4">
+                        <label className="flex items-center justify-between cursor-pointer">
+                            <div className="flex flex-col">
+                                <span className="font-bold text-slate-800 text-sm">حفظ تلقائي على القرص</span>
+                                <span className="text-xs text-slate-500 mt-1">تنزيل نسخة احتياطية (json) بعد كل توليد</span>
+                            </div>
+                            <input type="checkbox" checked={autoSaveToDisk} onChange={e => setAutoSaveToDisk(e.target.checked)} className="sr-only peer" />
+                            <div className="relative w-11 h-6 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                        </label>
+                    </div>
+                    <div className="border-t border-slate-100 p-2">
+                        <button onClick={handleResetAll} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 transition-colors">
+                            <Power className="w-4 h-4" />
+                            <span>إعادة تعيين المشروع بالكامل</span>
+                        </button>
+                    </div>
+                  </div>
+                )}
+              </div>
           </div>
         </header>
 
-        {/* Workspace */}
         <div className="flex-1 overflow-y-auto p-6 lg:p-10 scroll-smooth">
           {activeTask ? (
             <div className="max-w-4xl mx-auto space-y-6 pb-20">
-              
-              {/* Prompt Section (Editable) */}
-              <section className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 mb-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                    <Code2 className="w-5 h-5 text-indigo-500" />
-                    المتطلبات التقنية (Prompt)
-                  </h3>
-                  <div className="flex gap-2">
-                    <button 
-                      onClick={handleGenerate}
-                      disabled={activeTask.status === TaskStatus.PROCESSING}
-                      className={`
-                        flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold text-white transition-all
-                        ${activeTask.status === TaskStatus.PROCESSING 
-                          ? 'bg-slate-400 cursor-not-allowed' 
-                          : 'bg-indigo-600 hover:bg-indigo-700 shadow-md hover:shadow-lg shadow-indigo-500/20'
-                        }
-                      `}
-                    >
-                      {activeTask.status === TaskStatus.PROCESSING ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          جاري المعالجة...
-                        </>
-                      ) : (
-                        <>
-                          <Bot className="w-4 h-4" />
-                          توليد المواصفات
-                        </>
-                      )}
-                    </button>
-                  </div>
+              <section className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+                 <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Code2 className="w-5 h-5 text-indigo-500" />المتطلبات التقنية (Prompt)</h3>
+                  <button onClick={handleGenerate} disabled={activeTask.status === TaskStatus.PROCESSING || isBatchProcessing}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold text-white transition-all ${activeTask.status === TaskStatus.PROCESSING || isBatchProcessing ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 shadow-md hover:shadow-lg shadow-indigo-500/20'}`}>
+                    {activeTask.status === TaskStatus.PROCESSING ? <><RefreshCw className="w-4 h-4 animate-spin" />جاري المعالجة...</> : <><Bot className="w-4 h-4" />توليد المواصفات</>}
+                  </button>
                 </div>
-                <textarea
-                  value={activeTask.prompt}
-                  onChange={(e) => handlePromptChange(e.target.value)}
+                <textarea value={activeTask.prompt} onChange={(e) => handlePromptChange(e.target.value)}
                   className="w-full h-48 p-4 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-mono text-sm leading-relaxed text-slate-700 resize-none"
-                  placeholder="اكتب المتطلبات هنا..."
-                  dir="rtl"
-                />
+                  placeholder="اكتب المتطلبات هنا..." dir="rtl" />
               </section>
 
-              {/* Goal Section */}
-              <section className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 mb-6">
+              <section className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
                 <div className="flex items-center gap-2 mb-4">
                   <Crosshair className="w-5 h-5 text-rose-500" />
                   <h3 className="text-lg font-bold text-slate-800">الهدف (Goal)</h3>
                 </div>
-                <input
-                  type="text"
-                  value={activeTask.goal}
-                  onChange={(e) => handleGoalChange(e.target.value)}
+                <input type="text" value={activeTask.goal} onChange={(e) => handleGoalChange(e.target.value)}
                   className="w-full p-3 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all text-slate-700"
-                  placeholder="حدد الهدف..."
-                />
+                  placeholder="حدد الهدف..." />
               </section>
 
-              {/* Deep Thinking UI (Visual Feedback) */}
-              {activeTask.status === TaskStatus.PROCESSING && (
-                <div className="bg-white rounded-2xl p-12 border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center animate-in fade-in duration-500 relative overflow-hidden mb-6">
-                  {/* Deep Thinking Animation */}
-                  <div className="relative mb-6">
-                    <div className="w-20 h-20 rounded-full border-4 border-indigo-100 border-t-indigo-600 animate-spin"></div>
-                    <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
-                      <Brain className="w-8 h-8 text-indigo-600 animate-pulse" />
-                    </div>
+              <Checklist 
+                task={activeTask}
+                onToggleItem={handleToggleChecklistItem}
+                onAddItem={handleAddChecklistItem}
+                onDeleteItem={handleDeleteChecklistItem}
+                onGenerate={handleGenerateChecklist}
+                isGenerating={isChecklistGenerating}
+              />
+              
+              {activeTask.errorMessage && (
+                  <div className="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl shadow-sm">
+                      <div className="flex items-center gap-2 font-bold mb-2">
+                          <AlertCircle className="w-5 h-5" />
+                          حدث خطأ أثناء المعالجة
+                      </div>
+                      <p className="text-sm font-mono text-red-700">{activeTask.errorMessage}</p>
                   </div>
-                  
-                  <h3 className="text-xl font-bold text-slate-800 mb-2">جاري التفكير العميق...</h3>
-                  <div className="space-y-1">
-                    <p className="text-slate-500 text-sm">يقوم النموذج بتحليل المتطلبات وبناء الهيكل المعماري.</p>
-                    <p className="text-slate-400 text-xs animate-pulse">يتم استدعاء سياق المشروع السابق لضمان الاتساق...</p>
-                  </div>
-                  
-                  {/* Subtle background glow */}
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-indigo-500/5 rounded-full blur-3xl -z-10"></div>
-                </div>
               )}
 
-              {/* Result Section */}
               {activeTask.result && (
                 <section className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 animate-in fade-in slide-in-from-bottom-4 duration-500">
                   <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-100">
@@ -821,27 +713,11 @@ const App: React.FC = () => {
                       <h3 className="text-lg font-bold text-slate-800">المواصفات المولدة</h3>
                     </div>
                     <div className="flex gap-2">
-                      <button 
-                        onClick={handleDownloadCurrent}
-                        className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors"
-                        title="تحميل Markdown"
-                      >
-                        <Download className="w-5 h-5" />
-                      </button>
+                      <button onClick={handleDownloadCurrent} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500" title="تحميل Markdown"><Download className="w-5 h-5" /></button>
                     </div>
                   </div>
                   <SimpleMarkdown content={activeTask.result} />
                 </section>
-              )}
-
-              {activeTask.status === TaskStatus.FAILED && activeTask.errorMessage && (
-                <div className="bg-red-50 text-red-600 p-4 rounded-xl border border-red-200 flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-bold">فشل التوليد</p>
-                    <p className="text-sm mt-1 opacity-90">{activeTask.errorMessage}</p>
-                  </div>
-                </div>
               )}
             </div>
           ) : (

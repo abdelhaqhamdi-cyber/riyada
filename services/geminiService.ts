@@ -1,32 +1,43 @@
-import { GoogleGenAI } from "@google/genai";
+
+
+import { GoogleGenAI, Type } from "@google/genai";
 
 // Initialize the client
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const SYSTEM_INSTRUCTION = `
-أنت مهندس برمجيات خبير (Senior Software Architect) ومطور ويب شامل.
-مهمتك هي كتابة مواصفات تقنية وأكواد قابلة للتنفيذ المباشر.
+أنت مهندس حلول رئيسي وقائد تطوير نخبوي (Principal Solutions Architect & Elite Development Lead).
+مهمتك هي ترجمة المتطلبات إلى نظام برمجي متكامل، جاهز للإنتاج، وموثق بأعلى المعايير الاحترافية.
 
-=== 1. قواعد السياق (Project Context) ===
-ستتلقى في الطلب قسماً بعنوان "سياق المشروع الحالي". يحتوي هذا على ملخصات أو أكواد من مهام سابقة تم إنجازها.
-- **يجب** عليك احترام القرارات التقنية المتخذة سابقاً (مثلاً: إذا تم اختيار PostgreSQL في مهمة سابقة، لا تستخدم MongoDB الآن).
-- ابني على ما تم إنجازه ولا تكرر الأساسيات إلا إذا طُلب منك.
+=== القاعدة الذهبية: الجاهزية للإنتاج ===
+كل مخرجاتك يجب أن تكون جاهزة للإنتاج (Production-Ready). أنت لا تقوم بكتابة مسودات، بل تقوم ببناء المنتج النهائي مباشرة. الدقة، الاكتمال، والالتزام بأفضل الممارسات هي أمور غير قابلة للتفاوض.
 
-=== 2. قواعد المخططات البيانية (Visuals & Diagrams) ===
-عندما يتطلب الطلب تصميماً للبنية (Architecture) أو قاعدة البيانات (Database) أو تدفق العمليات (Flow):
-- **يجب دائماً** إرفاق مخططات بصرية باستخدام **Mermaid.js**.
-- استخدم \`graph TD\` للهيكلية العامة.
-- استخدم \`erDiagram\` لتصاميم قواعد البيانات والعلاقات.
-- استخدم \`sequenceDiagram\` لتدفق العمليات المعقدة.
-- ضع كود المخطط داخل كتلة كود: \`\`\`mermaid
+=== 1. بروتوكول الاتساق (Consistency Protocol) ===
+ستتلقى سياقاً للمهام المنجزة سابقاً.
+- **الالتزام المطلق:** يجب عليك احترام القرارات التقنية السابقة (لغات البرمجة، قواعد البيانات، الأنماط المعمارية) لضمان اتساق المشروع.
+- **البناء التراكمي:** لا تكرر الأكواد الأساسية، بل افترض وجودها وقم بالبناء عليها.
 
-=== 3. قواعد نظام الملفات (File System Protocol) ===
-لتمكين النظام من "تنفيذ" إجاباتك وتحويلها إلى ملفات حقيقية، اتبع التالي:
-- يجب أن يبدأ كل مربع كود برمجي (غير Mermaid) بتعليق يحدد المسار: \`// filename: path/to/file\`
-- اجعل الكود كاملاً وجاهزاً للعمل.
+=== 2. التزام التوضيح البصري (Visual Clarity Mandate) ===
+عند تصميم أي بنية (Architecture)، قاعدة بيانات (Database)، أو تدفق (Flow):
+- **إلزامي:** استخدم **Mermaid.js** لإنشاء مخططات بصرية واضحة.
+- استخدم المخطط المناسب للمهمة: \`graph TD\` للهياكل، \`erDiagram\` للبيانات، \`sequenceDiagram\` للتفاعلات.
+- يجب وضع كود المخطط داخل كتلة كود محددة: \`\`\`mermaid
 
-هدفنا: بناء مشروع متكامل، متسق، وموثق بشكل احترافي مع التركيز على التوضيح البصري.
+=== 3. بروتوكول نظام الملفات للتنفيذ الآلي (Automated Execution Protocol) ===
+لتمكين التنفيذ الآلي لمخرجاتك، اتبع هذا البروتوكول بدقة:
+- **تحديد المسار إلزامي:** يجب أن يبدأ كل مربع كود برمجي (غير Mermaid) بتعليق يحدد المسار الكامل والملف: \`// filename: path/to/your/file.ext\`
+- **الكود الكامل:** يجب أن يكون الكود كاملاً، قابلاً للترجمة (compilable)، وجاهزاً للتشغيل دون تعديل.
+
+هدفنا النهائي: إنشاء نظام برمجي احترافي، متكامل، وموثق بشكل لا تشوبه شائة.
 `;
+
+const CHECKLIST_SYSTEM_INSTRUCTION = `
+أنت مدير مشاريع تقنية خبير (Expert Technical Project Manager).
+مهمتك هي تحليل متطلبات وهدف مهمة معينة، ثم تقسيمها إلى قائمة مراجعة (checklist) دقيقة وقابلة للتنفيذ.
+- يجب أن تكون كل نقطة في القائمة واضحة ومحددة.
+- ركز على المخرجات التقنية المطلوبة (e.g., "Create API endpoint for user registration", "Design database schema for products").
+`;
+
 
 // Helper for delay
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -42,8 +53,8 @@ const getFriendlyErrorMessage = (error: any): string => {
     return "مفتاح API غير صالح أو مفقود (Invalid API Key). يرجى التحقق من الإعدادات.";
   }
   
-  if (msg.includes('429') || msg.includes('quota') || msg.includes('resource exhausted') || status === 429) {
-    return "تم تجاوز حد الاستخدام المسموح (Rate Limit Exceeded). يرجى الانتظار قليلاً قبل المحاولة.";
+  if (msg.includes('quota') || msg.includes('429') || msg.includes('resource exhausted') || status === 429) {
+    return "لقد تجاوزت الحصة المخصصة لك (Quota Exceeded). هذا يعني أنك قمت بعدد كبير من الطلبات في فترة قصيرة. يرجى الانتظار بضع دقائق ثم المحاولة مرة أخرى.";
   }
   
   if (msg.includes('503') || msg.includes('overloaded') || msg.includes('service unavailable') || status === 503) {
@@ -78,7 +89,8 @@ async function generateWithRetry(
       
       const response = await ai.models.generateContent({
         model: model,
-        contents: [{ parts: [{ text: prompt }] }],
+        // FIX: The `contents` parameter should be a string for single-turn text prompts.
+        contents: prompt,
         config: config,
       });
 
@@ -90,14 +102,14 @@ async function generateWithRetry(
       console.warn(`Attempt ${attempt} failed for ${model}:`, error.message);
       lastError = error;
       
-      // Stop retrying immediately if it's a client error (4xx) that isn't Quota related (429)
+      // Do not retry on client-side errors like invalid API key
       if (error.status && error.status >= 400 && error.status < 500 && error.status !== 429) {
         throw error;
       }
 
-      // Exponential backoff: 2s, 4s, 8s
       if (attempt < maxRetries) {
-        const waitTime = 2000 * Math.pow(2, attempt - 1);
+        // Exponential backoff
+        const waitTime = 1000 * Math.pow(2, attempt);
         await delay(waitTime);
       }
     }
@@ -106,39 +118,64 @@ async function generateWithRetry(
   throw lastError || new Error(`Failed to generate content with ${model} after ${maxRetries} attempts.`);
 }
 
-export const generateTechnicalSpec = async (prompt: string, projectContext: string = ""): Promise<string> => {
-  // Inject context into the user prompt
+export const generateTechnicalSpec = async (prompt: string, projectContext: string = "", checklist: string = ""): Promise<string> => {
   let finalPrompt = `=== المتطلبات التقنية للمهمة الحالية ===\n${prompt}\n\n`;
   
+  if (checklist) {
+    finalPrompt += `=== قائمة المراجعة (معايير القبول) ===\n**يجب** الالتزام بتنفيذ جميع هذه النقاط:\n${checklist}\n\n`;
+  }
+
   if (projectContext) {
     finalPrompt += `=== سياق المشروع (مهام مكتملة سابقاً) ===\nاستخدم المعلومات التالية لضمان الاتساق (لا تكررها، بل ابنِ عليها):\n${projectContext}\n\n`;
   }
 
   try {
-    console.log("Starting generation sequence (Thinking Mode)...");
-    return await generateWithRetry('gemini-2.5-flash', finalPrompt, {
-      systemInstruction: SYSTEM_INSTRUCTION, 
-      thinkingConfig: { 
-        thinkingBudget: 2048 
-      },
-    }, 2); 
-  } catch (thinkingError: any) {
-    console.warn("Thinking mode exhausted. Switching to Standard Fallback...", thinkingError.message);
-    
-    if (thinkingError.status === 401) {
-       throw new Error(getFriendlyErrorMessage(thinkingError));
-    }
-
-    try {
-      const result = await generateWithRetry('gemini-2.5-flash', finalPrompt, {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.2,
-      }, 3); 
-      
-      return result + "\n\n---\n*(ملاحظة: تم التوليد باستخدام النمط القياسي لضمان استمرارية الخدمة)*";
-    } catch (fallbackError: any) {
-      console.error("All generation strategies failed.", fallbackError);
-      throw new Error(getFriendlyErrorMessage(fallbackError));
-    }
+    return await generateWithRetry('gemini-3-pro-preview', finalPrompt, {
+      systemInstruction: SYSTEM_INSTRUCTION,
+      temperature: 0.3,
+      topK: 40,
+      topP: 0.95,
+      // Using a slightly more capable model for primary generation
+    }, 3);
+  } catch (error: any) {
+    console.error("Primary generation failed. All retries exhausted.", error);
+    // This is the final point of failure, so we must throw the user-friendly message.
+    throw new Error(getFriendlyErrorMessage(error));
   }
+};
+
+export const generateChecklist = async (prompt: string, goal: string): Promise<string[]> => {
+    const finalPrompt = `
+    الرجاء إنشاء قائمة مراجعة للمهمة التالية:
+    - **المتطلبات (Prompt):** ${prompt}
+    - **الهدف (Goal):** ${goal}
+    `;
+    
+    try {
+        const responseText = await generateWithRetry('gemini-2.5-flash', finalPrompt, {
+            systemInstruction: CHECKLIST_SYSTEM_INSTRUCTION,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.STRING,
+                description: 'A single, actionable checklist item.'
+              }
+            },
+            temperature: 0.1,
+        }, 3);
+
+        // Clean the response to ensure it's valid JSON, though schema should make it clean
+        const cleanedText = responseText.replace(/```json|```/g, '').trim();
+        const parsed = JSON.parse(cleanedText);
+
+        if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) {
+            return parsed;
+        } else {
+            throw new Error("Invalid JSON format for checklist");
+        }
+    } catch (error: any) {
+        console.error("Failed to generate or parse checklist:", error);
+        throw new Error("لم يتمكن الذكاء الاصطناعي من توليد قائمة مراجعة صالحة. حاول مرة أخرى أو قم بإضافتها يدوياً.");
+    }
 };

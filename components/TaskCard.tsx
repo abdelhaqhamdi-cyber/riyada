@@ -95,20 +95,32 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, isActive }) =
       default: return 'قيد الانتظار';
     }
   };
+  
+  const checklistProgress = () => {
+    if (!task.checklist || task.checklist.length === 0) {
+      return null;
+    }
+    const total = task.checklist.length;
+    const completed = task.checklist.filter(item => item.completed).length;
+    const percentage = total > 0 ? (completed / total) * 100 : 0;
+    return { completed, total, percentage };
+  };
+
+  const progress = checklistProgress();
 
   return (
     <div 
       onClick={() => onClick(task)}
       className={`
-        cursor-pointer rounded-lg p-2.5 border transition-all duration-200 group relative
+        cursor-pointer rounded-lg p-3 border transition-all duration-200 group relative
         ${isActive 
-          ? 'bg-white border-primary shadow-md ring-1 ring-primary' 
-          : 'bg-white border-slate-200 hover:border-blue-300 hover:shadow-sm'
+          ? 'bg-white border-primary shadow-lg ring-2 ring-primary/50' 
+          : 'bg-white border-slate-200 hover:border-blue-400 hover:shadow-md'
         }
       `}
     >
-      <div className="flex items-start justify-between mb-1.5">
-        <div className={`p-1.5 rounded-md ${isActive ? 'bg-blue-50 text-primary' : 'bg-slate-100 text-slate-500'}`}>
+      <div className="flex items-start justify-between mb-2">
+        <div className={`p-2 rounded-lg ${isActive ? 'bg-blue-50 text-primary' : 'bg-slate-100 text-slate-500'}`}>
           {getIcon()}
         </div>
         <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${getStatusColor()}`}>
@@ -116,13 +128,32 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, isActive }) =
         </span>
       </div>
 
-      <h3 className={`font-bold text-sm mb-0.5 truncate ${isActive ? 'text-slate-900' : 'text-slate-700'}`}>
+      <h3 className={`font-bold text-sm mb-1 truncate ${isActive ? 'text-slate-900' : 'text-slate-700'}`}>
         {task.title}
       </h3>
       
-      <p className="text-xs text-slate-500 line-clamp-1">
+      <p className="text-xs text-slate-500 line-clamp-1 mb-3">
         {task.goal}
       </p>
+
+      {progress && (
+        <div className="mt-2">
+          <div className="flex justify-between items-center mb-1">
+            <span className="text-[10px] font-semibold text-slate-500">
+              التقدم
+            </span>
+            <span className="text-[10px] font-bold text-slate-600">
+              {progress.completed}/{progress.total}
+            </span>
+          </div>
+          <div className="w-full bg-slate-200 rounded-full h-1.5">
+            <div 
+              className="bg-primary h-1.5 rounded-full transition-all duration-500"
+              style={{ width: `${progress.percentage}%` }}
+            ></div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
