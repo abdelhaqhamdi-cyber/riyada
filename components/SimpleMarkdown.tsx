@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Copy, Check, Eye, Code as CodeIcon, MonitorPlay, Download, GitGraph } from 'lucide-react';
 
 interface SimpleMarkdownProps {
@@ -10,14 +10,11 @@ interface CodeBlockProps {
   language?: string;
 }
 
-// Minimal Mermaid Renderer using an img src approach via mermaid.ink (safe & lightweight)
-// or a simple text fallback if offline. 
 const MermaidBlock: React.FC<{ code: string }> = ({ code }) => {
   const [encoded, setEncoded] = useState<string | null>(null);
 
   useEffect(() => {
     try {
-      // Basic base64 encoding for mermaid.ink
       const state = {
         code: code,
         mermaid: { theme: 'neutral' },
@@ -48,7 +45,6 @@ const MermaidBlock: React.FC<{ code: string }> = ({ code }) => {
   );
 };
 
-// Helper to parse inline styles (**bold**, `code`)
 const parseInline = (text: string): React.ReactNode[] => {
   const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
   return parts.map((part, idx) => {
@@ -66,7 +62,6 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language = 'code' }) => {
   const [copied, setCopied] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
 
-  // Use the dedicated component for Mermaid
   if (language.toLowerCase() === 'mermaid') {
     return <MermaidBlock code={code} />;
   }
@@ -83,7 +78,6 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language = 'code' }) => {
     }
   };
 
-  // Prepare standard HTML wrapper if the code is partial
   const getFullHtml = (rawCode: string) => {
     if (rawCode.includes('<!DOCTYPE html>') || rawCode.includes('<html')) {
       return rawCode;
@@ -117,15 +111,12 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language = 'code' }) => {
     document.body.removeChild(link);
   };
 
-  // Inject Tailwind if missing for better preview
   const getPreviewContent = () => {
     return getFullHtml(code);
   };
 
   return (
     <div className="my-8 rounded-xl overflow-hidden border border-slate-200 shadow-lg bg-white dir-ltr transition-all duration-300 hover:shadow-xl" dir="ltr">
-      
-      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-800 text-slate-200">
         <div className="flex items-center gap-3">
           <div className="flex gap-1.5">
@@ -179,7 +170,6 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language = 'code' }) => {
         </div>
       </div>
 
-      {/* Content Area */}
       {showPreview && isPreviewable ? (
         <div className="relative bg-slate-100 h-[500px] w-full border-t border-slate-200 animate-in fade-in duration-300">
           <iframe 
@@ -206,14 +196,11 @@ interface TableProps {
   rows: string[];
 }
 
-// Fix: Changed Table to be a React.FC to correctly handle the 'key' prop, which is managed by React and not passed to the component itself.
 const Table: React.FC<TableProps> = ({ rows }) => {
   if (rows.length < 2) return null;
 
-  // Helper to split row by pipe | and trim whitespace, ignoring empty start/end
   const parseRow = (row: string) => {
     return row.split('|').filter((cell, i, arr) => {
-      // Filter out first/last empty elements caused by | at start/end
       if (i === 0 && cell.trim() === '') return false;
       if (i === arr.length - 1 && cell.trim() === '') return false;
       return true;
@@ -221,7 +208,6 @@ const Table: React.FC<TableProps> = ({ rows }) => {
   };
 
   const headers = parseRow(rows[0]);
-  // rows[1] is the separator |---|---|, we skip it
   const bodyRows = rows.slice(2).map(parseRow);
 
   return (
@@ -258,22 +244,61 @@ export const SimpleMarkdown: React.FC<SimpleMarkdownProps> = ({ content }) => {
   const lines = content.split('\n');
   const elements: React.ReactNode[] = [];
   
+  let keyCounter = 0;
+  
   let inCodeBlock = false;
   let codeBuffer: string[] = [];
   let currentLanguage = '';
   
   let inTable = false;
   let tableBuffer: string[] = [];
-  
-  let keyCounter = 0;
+
+  let inList = false;
+  let listBuffer: string[] = [];
+  let listType: 'ul' | 'ol' = 'ul';
+
+  const flushList = () => {
+    if (listBuffer.length > 0) {
+      if (listType === 'ul') {
+        elements.push(
+          <ul key={`list-${keyCounter++}`} className="list-disc list-outside mr-6 ml-4 mb-4 text-slate-600 space-y-1">
+            {listBuffer.map((item, idx) => (
+              <li key={idx} className="pl-1">{parseInline(item)}</li>
+            ))}
+          </ul>
+        );
+      } else {
+        elements.push(
+          <ol key={`list-${keyCounter++}`} className="list-decimal list-outside mr-6 ml-4 mb-4 text-slate-600 space-y-1">
+             {listBuffer.map((item, idx) => (
+              <li key={idx} className="pl-1">{parseInline(item)}</li>
+            ))}
+          </ol>
+        );
+      }
+      listBuffer = [];
+    }
+    inList = false;
+  };
+
+  const flushTable = () => {
+    if (tableBuffer.length > 0) {
+      elements.push(<Table key={`table-${keyCounter++}`} rows={tableBuffer} />);
+      tableBuffer = [];
+    }
+    inTable = false;
+  };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    const trimmedLine = line.trim();
 
-    // --- Code Block Handling ---
-    if (line.trim().startsWith('```')) {
+    // Check if we are entering or exiting a code block
+    if (trimmedLine.startsWith('```')) {
+      if (inList) flushList();
+      if (inTable) flushTable();
+
       if (inCodeBlock) {
-        // End of code block
         inCodeBlock = false;
         elements.push(
           <CodeBlock 
@@ -285,15 +310,8 @@ export const SimpleMarkdown: React.FC<SimpleMarkdownProps> = ({ content }) => {
         codeBuffer = [];
         currentLanguage = '';
       } else {
-        // We ensure we are not in a table when starting a code block
-        if (inTable) {
-           inTable = false;
-           elements.push(<Table key={`table-${keyCounter++}`} rows={tableBuffer} />);
-           tableBuffer = [];
-        }
-        // Start of code block
         inCodeBlock = true;
-        currentLanguage = line.trim().replace('```', '') || 'code';
+        currentLanguage = trimmedLine.replace('```', '') || 'code';
       }
       continue;
     }
@@ -303,52 +321,56 @@ export const SimpleMarkdown: React.FC<SimpleMarkdownProps> = ({ content }) => {
       continue;
     }
 
-    // --- Table Handling ---
-    // Heuristic: Line starts with | AND looks like a table row (has internal structure or closing pipe)
-    const trimmedLine = line.trim();
+    // Table Handling
     const looksLikeTable = trimmedLine.startsWith('|') && (trimmedLine.endsWith('|') || trimmedLine.split('|').length > 2);
-    
     if (looksLikeTable) {
-      inTable = true;
-      tableBuffer.push(line);
-      
-      // If it's the last line, flush the table
-      if (i === lines.length - 1) {
-        elements.push(<Table key={`table-${keyCounter++}`} rows={tableBuffer} />);
-      }
-      continue;
+        if (inList) flushList();
+        inTable = true;
+        tableBuffer.push(line);
+        if (i === lines.length - 1) flushTable();
+        continue;
     } else if (inTable) {
-      // If we were in a table but this line is not a table row, flush the table
-      inTable = false;
-      elements.push(<Table key={`table-${keyCounter++}`} rows={tableBuffer} />);
-      tableBuffer = [];
-      // Don't continue, process this line as normal text below
+        flushTable();
     }
 
-    // --- Standard Markdown Handling ---
-    
-    // Headers
+    // List Handling
+    const isUl = trimmedLine.startsWith('- ');
+    const isOl = /^\d+\.\s/.test(trimmedLine);
+
+    if (isUl || isOl) {
+        const currentType = isUl ? 'ul' : 'ol';
+        const content = isUl ? trimmedLine.substring(2) : trimmedLine.replace(/^\d+\.\s/, '');
+
+        if (!inList) {
+            inList = true;
+            listType = currentType;
+            listBuffer = [content];
+        } else if (listType !== currentType) {
+            // Switch list type
+            flushList();
+            inList = true;
+            listType = currentType;
+            listBuffer = [content];
+        } else {
+            listBuffer.push(content);
+        }
+        
+        if (i === lines.length - 1) flushList();
+        continue;
+    } else if (inList) {
+        flushList();
+    }
+
+    // Standard elements
     if (line.startsWith('### ')) {
       elements.push(<h3 key={keyCounter++} className="text-xl font-bold text-slate-800 mt-8 mb-4 flex items-center gap-2 before:content-[''] before:w-1.5 before:h-1.5 before:bg-primary before:rounded-full">{parseInline(line.replace('### ', ''))}</h3>);
     } else if (line.startsWith('## ')) {
       elements.push(<h2 key={keyCounter++} className="text-2xl font-bold text-slate-900 mt-10 mb-5 pb-2 border-b border-slate-200">{parseInline(line.replace('## ', ''))}</h2>);
     } else if (line.startsWith('# ')) {
       elements.push(<h1 key={keyCounter++} className="text-3xl font-extrabold text-slate-900 mt-8 mb-6 tracking-tight">{parseInline(line.replace('# ', ''))}</h1>);
-    } 
-    // Lists
-    else if (line.trim().startsWith('- ')) {
-       elements.push(<li key={keyCounter++} className="ml-4 mr-6 list-disc text-slate-700 mb-2 marker:text-slate-400">{parseInline(line.replace('- ', ''))}</li>);
-    }
-    // Numbered Lists
-    else if (/^\d+\.\s/.test(line.trim())) {
-      elements.push(<div key={keyCounter++} className="ml-4 mr-6 text-slate-700 mb-2 font-medium">{parseInline(line)}</div>);
-   }
-    // Empty Lines
-    else if (line.trim() === '') {
+    } else if (trimmedLine === '') {
       elements.push(<div key={keyCounter++} className="h-3"></div>);
-    }
-    // Paragraphs
-    else {
+    } else {
       elements.push(<p key={keyCounter++} className="text-slate-600 leading-8 mb-4 text-base">{parseInline(line)}</p>);
     }
   }

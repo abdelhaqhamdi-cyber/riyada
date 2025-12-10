@@ -1,5 +1,3 @@
-
-
 import { GoogleGenAI, Type } from "@google/genai";
 
 // Initialize the client
@@ -89,8 +87,12 @@ async function generateWithRetry(
       
       const response = await ai.models.generateContent({
         model: model,
-        // FIX: The `contents` parameter should be a string for single-turn text prompts.
-        contents: prompt,
+        contents: [
+            {
+                role: 'user',
+                parts: [{ text: prompt }]
+            }
+        ],
         config: config,
       });
 

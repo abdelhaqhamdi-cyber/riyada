@@ -1,6 +1,3 @@
-
-
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import JSZip from 'jszip';
 import { ProjectTask, TaskStatus, ChecklistItem } from './types';
@@ -29,12 +26,16 @@ import {
   Crosshair,
   Search,
   Settings,
-  Power
+  Power,
+  HardDriveDownload,
+  ListChecks,
+  CheckCircle2
 } from 'lucide-react';
 
 const STORAGE_KEY = 'muhandis_tasks_v9';
 const ACTIVE_TASK_KEY = 'muhandis_active_task_v9';
 const AUTO_SAVE_KEY = 'muhandis_auto_save_pref';
+const AUTO_CHECKLIST_KEY = 'muhandis_auto_checklist_pref';
 const BATCH_TASK_DELAY_MS = 4000; // Increased delay for proactive pacing to avoid quota errors
 
 const App: React.FC = () => {
@@ -76,6 +77,10 @@ const App: React.FC = () => {
     return localStorage.getItem(AUTO_SAVE_KEY) === 'true';
   });
 
+  const [autoGenerateChecklist, setAutoGenerateChecklist] = useState<boolean>(() => {
+    return localStorage.getItem(AUTO_CHECKLIST_KEY) === 'true';
+  });
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isBatchProcessing, setIsBatchProcessing] = useState(false);
   const [isChecklistGenerating, setIsChecklistGenerating] = useState(false);
@@ -104,6 +109,10 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem(AUTO_SAVE_KEY, String(autoSaveToDisk));
   }, [autoSaveToDisk]);
+
+  useEffect(() => {
+    localStorage.setItem(AUTO_CHECKLIST_KEY, String(autoGenerateChecklist));
+  }, [autoGenerateChecklist]);
   
   useEffect(() => {
     if (syncStatus === 'syncing') {
@@ -208,9 +217,11 @@ const App: React.FC = () => {
     downloadFile(zipBlob, 'muhandis_project.zip');
   };
   
-  const handleExportState = () => {
+  // Adjusted to optionally accept tasks to avoid stale state issues during batch/async operations
+  const handleExportState = (currentTasks?: ProjectTask[]) => {
     try {
-      const projectState = JSON.stringify(tasks, null, 2);
+      const tasksToSave = currentTasks || tasks;
+      const projectState = JSON.stringify(tasksToSave, null, 2);
       const blob = new Blob([projectState], { type: 'application/json' });
       downloadFile(blob, `muhandis_project_state_${Date.now()}.json`);
       setSyncStatus('synced');
@@ -263,18 +274,53 @@ const App: React.FC = () => {
   const handleGenerate = async () => {
     if (!activeTask) return;
     setSyncStatus('syncing');
+    
+    // We update state to processing
     setTasks(p => p.map(t => t.id === activeTask.id ? { ...t, status: TaskStatus.PROCESSING, errorMessage: undefined } : t));
+    
     try {
-      const checklistContext = activeTask.checklist ? activeTask.checklist.map(c => `- ${c.text}`).join('\n') : "";
+      let currentChecklist = activeTask.checklist || [];
+
+      // --- AUTO CHECKLIST GENERATION ---
+      if (autoGenerateChecklist && currentChecklist.length === 0) {
+        setIsChecklistGenerating(true);
+        const items = await generateChecklist(activeTask.prompt, activeTask.goal);
+        const newChecklistItems: ChecklistItem[] = items.map(text => ({
+          id: `c-${activeTask.id}-${Date.now()}-${Math.random()}`,
+          text,
+          completed: true, // Auto-approve/complete for context usage
+        }));
+        currentChecklist = newChecklistItems;
+        
+        // Update local state immediately so user sees it
+        setTasks(prev => prev.map(t => t.id === activeTask.id ? { ...t, checklist: newChecklistItems } : t));
+        setIsChecklistGenerating(false);
+      }
+
+      // --- SPEC GENERATION ---
+      const checklistContext = currentChecklist.map(c => `- ${c.text}`).join('\n');
       const result = await generateTechnicalSpec(activeTask.prompt, getProjectContext(tasks), checklistContext);
       
-      setTasks(p => p.map(t => t.id === activeTask.id ? { ...t, status: TaskStatus.COMPLETED, result } : t));
-      if (autoSaveToDisk) handleExportState();
+      // Calculate new state locally to ensure we export the LATEST data
+      const updatedTasks = tasks.map(t => t.id === activeTask.id ? { 
+          ...t, 
+          status: TaskStatus.COMPLETED, 
+          checklist: currentChecklist, // Ensure checklist is persisted if generated
+          result 
+      } : t);
+      
+      setTasks(updatedTasks);
+      
+      // --- AUTO SAVE ---
+      if (autoSaveToDisk) {
+          handleExportState(updatedTasks);
+      }
 
     } catch (error) {
        const errorMsg = error instanceof Error ? error.message : "حدث خطأ غير معروف";
        setTasks(p => p.map(t => t.id === activeTask.id ? { ...t, status: TaskStatus.FAILED, errorMessage: errorMsg } : t));
        setSyncStatus('error');
+       setIsChecklistGenerating(false);
     }
   };
   
@@ -320,12 +366,38 @@ const App: React.FC = () => {
       setTasks(currentTasksState);
 
       try {
+        let currentChecklist = task.checklist || [];
+
+        // --- BATCH AUTO CHECKLIST ---
+        if (autoGenerateChecklist && currentChecklist.length === 0) {
+            setProcessingMessage(`(${i + 1}/${taskIds.length}) جاري توليد قائمة المراجعة: ${task.title}`);
+            const items = await generateChecklist(task.prompt, task.goal);
+            currentChecklist = items.map(text => ({
+                id: `c-${task.id}-${Date.now()}-${Math.random()}`,
+                text,
+                completed: true, // Auto-approve
+            }));
+            
+            // Update state with checklist
+            currentTasksState = currentTasksState.map(t => t.id === taskId ? { ...t, checklist: currentChecklist } : t);
+            setTasks(currentTasksState);
+            await delay(1000); // Slight delay for UI to settle
+        }
+
+        // --- BATCH SPEC GENERATION ---
+        setProcessingMessage(`(${i + 1}/${taskIds.length}) جاري توليد المواصفات: ${task.title}`);
         const projectContext = getProjectContext(currentTasksState);
-        const checklistContext = task.checklist ? task.checklist.map(c => `- ${c.text}`).join('\n') : "";
+        const checklistContext = currentChecklist.map(c => `- ${c.text}`).join('\n');
+        
         const result = await generateTechnicalSpec(task.prompt, projectContext, checklistContext);
         
         currentTasksState = currentTasksState.map(t => t.id === taskId ? { ...t, status: TaskStatus.COMPLETED, result } : t);
         setTasks(currentTasksState);
+        
+        // Auto-save after EACH successful generation in batch mode
+        if (autoSaveToDisk) {
+            handleExportState(currentTasksState);
+        }
 
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : "حدث خطأ غير معروف";
@@ -352,7 +424,8 @@ const App: React.FC = () => {
     setIsBatchProcessing(false);
     if (!stopBatchRef.current) {
         setProcessingMessage("اكتمل التنفيذ المتسلسل بنجاح!");
-        if (autoSaveToDisk) handleExportState();
+        // Final save just in case
+        if (autoSaveToDisk) handleExportState(currentTasksState);
         setSyncStatus('synced');
     }
     setTimeout(() => setProcessingMessage(null), 4000);
@@ -372,19 +445,13 @@ const App: React.FC = () => {
 
   const handleRegenerateAll = () => {
     if (window.confirm("هل أنت متأكد؟ سيتم مسح جميع المخرجات الحالية وإعادة توليد المشروع بالكامل.")) {
-      // 1. Create the new state with all tasks reset.
       const resetTasks = tasks.map(t => ({
         ...t,
         status: TaskStatus.PENDING,
         result: undefined,
         errorMessage: undefined,
       }));
-
-      // 2. Apply the state update to immediately reflect the reset in the UI.
       setTasks(resetTasks);
-      
-      // 3. Instead of setTimeout, trigger a useEffect to run the batch process.
-      // This is a more robust pattern in React for handling side effects after state updates.
       setRegenerationTrigger(resetTasks);
     }
   };
@@ -612,7 +679,7 @@ const App: React.FC = () => {
                     <Upload className="w-4 h-4" />
                 </button>
                 <button
-                    onClick={handleExportState}
+                    onClick={() => handleExportState()}
                     className="p-2 hover:bg-white rounded-md text-slate-600 hover:text-primary transition-colors"
                     title="حفظ نسخة احتياطية من جميع مهامك وتقدمك في ملف .json. استخدم هذا الملف لاستعادة عملك لاحقاً."
                 >
@@ -637,23 +704,46 @@ const App: React.FC = () => {
                   <Settings className="w-5 h-5" />
                 </button>
                 {isSettingsOpen && (
-                  <div ref={settingsRef} className="absolute left-0 mt-2 w-72 bg-white border border-slate-200 rounded-xl shadow-2xl z-20 animate-in fade-in slide-in-from-top-2 duration-200">
-                    <div className="p-4">
-                        <label className="flex items-center justify-between cursor-pointer">
+                  <div ref={settingsRef} className="absolute left-0 mt-2 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl z-20 animate-in fade-in slide-in-from-top-2 duration-200 p-4 space-y-4">
+                    
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between">
                             <div className="flex flex-col">
-                                <span className="font-bold text-slate-800 text-sm">حفظ تلقائي على القرص</span>
-                                <span className="text-xs text-slate-500 mt-1">تنزيل نسخة احتياطية (json) بعد كل توليد</span>
+                                <span className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                                    <ListChecks className="w-4 h-4 text-amber-500" />
+                                    توليد قائمة تلقائي
+                                </span>
+                                <span className="text-[10px] text-slate-500">إنشاء واعتماد قائمة المراجعة تلقائياً قبل البدء</span>
                             </div>
-                            <input type="checkbox" checked={autoSaveToDisk} onChange={e => setAutoSaveToDisk(e.target.checked)} className="sr-only peer" />
-                            <div className="relative w-11 h-6 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                        </label>
+                            <label className="relative inline-flex items-center cursor-pointer" dir="ltr">
+                                <input type="checkbox" checked={autoGenerateChecklist} onChange={e => setAutoGenerateChecklist(e.target.checked)} className="sr-only peer" />
+                                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+                            </label>
+                        </div>
+
+                        <div className="w-full h-px bg-slate-100"></div>
+
+                        <div className="flex items-center justify-between">
+                            <div className="flex flex-col">
+                                <span className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                                    <HardDriveDownload className="w-4 h-4 text-emerald-500" />
+                                    حفظ تلقائي على القرص
+                                </span>
+                                <span className="text-[10px] text-slate-500">تحميل ملف JSON احتياطي بعد كل عملية ناجحة</span>
+                            </div>
+                             <label className="relative inline-flex items-center cursor-pointer" dir="ltr">
+                                <input type="checkbox" checked={autoSaveToDisk} onChange={e => setAutoSaveToDisk(e.target.checked)} className="sr-only peer" />
+                                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                            </label>
+                        </div>
                     </div>
-                    <div className="border-t border-slate-100 p-2">
-                        <button onClick={handleResetAll} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 transition-colors">
-                            <Power className="w-4 h-4" />
-                            <span>إعادة تعيين المشروع بالكامل</span>
-                        </button>
-                    </div>
+
+                    <div className="w-full h-px bg-slate-100"></div>
+
+                    <button onClick={handleResetAll} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 transition-colors bg-red-50/50 border border-red-100">
+                        <Power className="w-4 h-4" />
+                        <span>إعادة تعيين المشروع بالكامل</span>
+                    </button>
                   </div>
                 )}
               </div>
